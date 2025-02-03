@@ -49,7 +49,7 @@ class Window(BaseWindow):
         self.outer.y = math.cos(self.time) * 0.5
 
     def on_mouse_press_event(self, x, y, button):
-        # randomize the colorwhen the mouse is clicked
+        # randomize the color when the mouse is clicked
         self.inner.color = (random.random(), random.random(), random.random())
 
 
