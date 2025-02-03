@@ -63,7 +63,7 @@ class BaseWindow(mglw.WindowConfig, ABC):
     def on_render(self, time, frame_time):
         self._time = time
         self._delta_time = frame_time
-        self.update(frame_time)
+        self.update(frame_time + 1e-6)  # avoid division by zero
         self.ctx.extra.render()
 
     @classmethod
