@@ -1,6 +1,5 @@
 import logging
 import weakref
-from abc import ABC, abstractmethod
 from typing import Tuple
 
 import moderngl as mgl
@@ -10,7 +9,7 @@ from guilible.ui import Rectangle
 from guilible.ui.base import RenderComponentRegistry
 
 
-class BaseWindow(mglw.WindowConfig, ABC):
+class BaseWindow(mglw.WindowConfig):
     """
     Base class for creating a window with moderngl_window and initializing the moderngl context
     """
@@ -18,31 +17,32 @@ class BaseWindow(mglw.WindowConfig, ABC):
     title = "guilible"
     aspect_ratio = None
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, use_guilible_components: bool = True, *args, **kwargs):
         if not hasattr(self, "ctx") and "ctx" not in kwargs:
             raise ValueError("For basic usage, run `BaseWindow.run()` instead of instantiating the class directly")
         super().__init__(*args, **kwargs)
         self._time = None
+        self._use_guilible_components = use_guilible_components
 
         # set up depth testing
         self.ctx.enable(mgl.DEPTH_TEST)
         self.ctx.depth_func = "<="
 
-        # set up render component registry
-        self.ctx.extra = RenderComponentRegistry()
+        if self._use_guilible_components:
+            # set up render component registry
+            self.ctx.extra = RenderComponentRegistry()
 
-        self.ui = Rectangle(0, 0, 1, 1, (0, 0, 0))
-        self.ui.ctx = self.ctx
-        self.ctx.extra.register(self.ui)
+            # create and register the base UI component
+            self.ui = Rectangle(0, 0, 1, 1, (0, 0, 0))
+            self.ui.ctx = self.ctx
+            self.ctx.extra.register(self.ui)
 
-    @abstractmethod
     def setup(self) -> None:
         """
         Initialize all the resources and components here
         """
         pass
 
-    @abstractmethod
     def update(self, delta: float) -> None:
         """
         Update the window state here
@@ -62,12 +62,17 @@ class BaseWindow(mglw.WindowConfig, ABC):
 
     def on_render(self, time, frame_time):
         self._time = time
-        self._delta_time = frame_time
         self.update(frame_time + 1e-6)  # avoid division by zero
-        self.ctx.extra.render()
+        if self._use_guilible_components:
+            self.ctx.extra.render()
 
     @classmethod
-    def run(config_cls: mglw.WindowConfig, window_provider: str = "glfw", log_level: int = logging.DEBUG) -> mglw.WindowConfig:
+    def run(
+        config_cls: mglw.WindowConfig,
+        init_guilible_components: bool = True,
+        window_provider: str = "glfw",
+        log_level: int = logging.DEBUG,
+    ) -> mglw.WindowConfig:
         """
         Initialize the window and the configuration class and run the main loop
 
@@ -75,6 +80,8 @@ class BaseWindow(mglw.WindowConfig, ABC):
         ----------
         config_cls : mglw.WindowConfig
             The configuration class to use
+        init_guilible_components : bool
+            Whether to initialize the UI component registry and rendering pipeline (if False, rendering must be done manually)
         window_provider : str
             The window provider to use (run `mglw.find_window_classes()` to see available providers)
         log_level : int
@@ -85,10 +92,6 @@ class BaseWindow(mglw.WindowConfig, ABC):
         mglw.WindowConfig
             The configuration instance
         """
-        # make sure we're not the base class
-        if config_cls == BaseWindow:
-            raise ValueError("BaseWindow is abstract. Make sure to call run() on a subclass")
-
         # setup mglw logging
         mglw.setup_basic_logging(log_level)
 
@@ -110,7 +113,7 @@ class BaseWindow(mglw.WindowConfig, ABC):
         window.print_context_info()
         mglw.activate_context(window)
 
-        config = config_cls(ctx=window.ctx, wnd=window, timer=mglw.Timer())
+        config = config_cls(use_guilible_components=init_guilible_components, ctx=window.ctx, wnd=window, timer=mglw.Timer())
         # avoid circular reference between window and config
         window._config = weakref.ref(config)
 
