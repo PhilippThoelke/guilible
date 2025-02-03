@@ -56,3 +56,7 @@ class Window(BaseWindow):
 if __name__ == "__main__":
     Window.run()
 ```
+The code above generates the following output:
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/6fe9e323-0951-4c9a-ac59-8c942d0c6f0d">
+</p>
