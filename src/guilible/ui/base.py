@@ -2,8 +2,9 @@ import weakref
 from abc import ABC, abstractmethod
 from typing import List, Optional, Tuple, Type
 
-import moderngl as mgl
 import numpy as np
+
+import moderngl as mgl
 from moderngl import Context
 
 
@@ -105,9 +106,9 @@ class RenderComponent:
         self.program = self.ctx.program(vertex_shader=comp_cls.VERTEX_SHADER, fragment_shader=comp_cls.FRAGMENT_SHADER)
 
         # parse program attributes
-        attrs = []
+        attrs = [None] * len(self.program._members)
         for key in self.program:
-            attrs.append((key, self.program[key].dimension * self.program[key].array_length))
+            attrs[self.program._attribute_locations[key]] = (key, self.program[key].dimension * self.program[key].array_length)
         self.instance_size = sum([attr[1] for attr in attrs[1:]])
 
         # create the instance buffer
