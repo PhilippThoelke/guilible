@@ -9,6 +9,7 @@ from moderngl import Context
 
 class UIElement(ABC):
 
+    VERTICES: List[float]
     VERTEX_SHADER: str
     FRAGMENT_SHADER: str
 
@@ -18,6 +19,8 @@ class UIElement(ABC):
         self._parent = None
         self._children = []
 
+        if not hasattr(self, "VERTICES"):
+            raise AttributeError(f"Missing VERTICES in class {self.__class__.__name__}")
         if not hasattr(self, "VERTEX_SHADER"):
             raise AttributeError(f"Missing VERTEX_SHADER in class {self.__class__.__name__}")
         if not hasattr(self, "FRAGMENT_SHADER"):
@@ -90,6 +93,9 @@ class UIElement(ABC):
 
 
 class RenderComponent:
+    INITIAL_BUFFER_SIZE = 1024
+    SIZE_MULTIPLIER = 2
+
     def __init__(self, ctx: Context, comp_cls: Type[UIElement]):
         self.ctx = ctx
         self.comp_cls = comp_cls
@@ -97,26 +103,53 @@ class RenderComponent:
 
         # create the shader program
         self.program = self.ctx.program(vertex_shader=comp_cls.VERTEX_SHADER, fragment_shader=comp_cls.FRAGMENT_SHADER)
-        assert len(self.program._members) == 2, "Program must have two attributes for now (gl_VertexID and params)"
+
+        # parse program attributes
+        attrs = []
+        for key in self.program:
+            attrs.append((key, self.program[key].dimension * self.program[key].array_length))
+        self.instance_size = sum([attr[1] for attr in attrs[1:]])
 
         # create the instance buffer
-        self.instance_size = self.program["params"].array_length
-        self.buffer = self.ctx.buffer(reserve=1024, dynamic=True)
-        self.vao = self.ctx.vertex_array(self.program, [(self.buffer, f"{self.instance_size}f /i", "params")])
+        self.buffer = self.ctx.buffer(reserve=RenderComponent.INITIAL_BUFFER_SIZE, dynamic=True)
+        self.vao = self.ctx.vertex_array(
+            self.program,
+            [
+                (self.ctx.buffer(np.array(self.comp_cls.VERTICES).astype("f4")), f"{attrs[0][1]}f /v", attrs[0][0]),
+                (self.buffer, " ".join([str(a[1]) + "f" for a in attrs[1:]]) + " /i", *[a[0] for a in attrs[1:]]),
+            ],
+        )
+
+        self.array_buffer = None
 
     def add(self, element: UIElement):
+        # add the element to the list of elements
         self.elements.append(element)
 
+        # recreate the array buffer
+        self.array_buffer = np.zeros(len(self.elements) * self.instance_size, dtype=np.float32)
+
+        if self.buffer.size < len(self.elements) * self.instance_size * 4:
+            # increase the buffer size by a factor of SIZE_MULTIPLIER
+            self.buffer.orphan(self.buffer.size * RenderComponent.SIZE_MULTIPLIER)
+
     def remove(self, element: UIElement):
+        # remove the element from the list of elements
         self.elements.remove(element)
 
+        # recreate the array buffer
+        self.array_buffer = np.zeros(len(self.elements) * self.instance_size, dtype=np.float32)
+
+        if self.buffer.size > len(self.elements) * self.instance_size * 4 * RenderComponent.SIZE_MULTIPLIER:
+            # decrease the buffer size by a factor of SIZE_MULTIPLIER
+            self.buffer.orphan(self.buffer.size // RenderComponent.SIZE_MULTIPLIER)
+
     def render(self):
-        self.buffer.clear()
-        data = np.zeros(len(self.elements) * self.instance_size, dtype=np.float32)
         for i, element in enumerate(self.elements):
-            data[i * self.instance_size : (i + 1) * self.instance_size] = element.transformed_params()
-        self.buffer.write(data.tobytes())
-        self.vao.render(mode=mgl.TRIANGLES, vertices=len(self.elements) * 6, instances=len(self.elements))
+            self.array_buffer[i * self.instance_size : (i + 1) * self.instance_size] = element.transformed_params()
+
+        self.buffer.write(self.array_buffer)
+        self.vao.render(mode=mgl.TRIANGLES, vertices=len(self.comp_cls.VERTICES), instances=len(self.elements))
 
 
 class RenderComponentRegistry:

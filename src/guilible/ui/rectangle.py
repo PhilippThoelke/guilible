@@ -1,30 +1,24 @@
-from typing import Tuple, Union
+from typing import Tuple
 
 from guilible.ui.base import UIElement
 
 
 class Rectangle(UIElement):
 
+    VERTICES = [-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, -1, 0, 1, 1, 0, -1, 1, 0]
+
     VERTEX_SHADER = """
     #version 330
-    in float params[7]; // x, y, w, h, r, g, 
+    in vec3 pos;
+    in vec4 rect;
+    in vec3 color;
 
     out vec3 v_color;
 
-    vec3 vertices[6] = vec3[](
-        vec3(-1, -1, 0),
-        vec3(1, -1, 0),
-        vec3(1, 1, 0),
-        vec3(-1, -1, 0),
-        vec3(1, 1, 0),
-        vec3(-1, 1, 0)
-    );
-
     void main() {
-        vec3 pos = vertices[gl_VertexID] * vec3(params[2], params[3], 1);
-        pos.xy += vec2(params[0], params[1]);
-        gl_Position = vec4(pos, 1.0);
-        v_color = vec3(params[4], params[5], params[6]);
+        vec2 p = vec2(pos.x * rect.z, pos.y * rect.w) + vec2(rect.x, rect.y);
+        gl_Position = vec4(p, 0.0, 1.0);
+        v_color = color;
     }
     """
 

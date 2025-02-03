@@ -18,10 +18,12 @@ class Window(BaseWindow):
 
         self.outer_box = Rectangle(0, 0.2, 0.2, 0.2, (1, 1, 1))
         self.inner_box = Rectangle(0, 0, 0.95, 0.95, (0.5, 0, 1))
-        self.chain = [Rectangle(0, 0, 0.1, 0.1, (0, 1, 0)) for _ in range(10)]
+        self.chain = [Rectangle(0, 0, 0.1, 0.1, (0, 1, 0)) for _ in range(20)]
         self.ui.add(self.outer_box)
         self.outer_box.add(self.inner_box)
         self.inner_box.add(*self.chain)
+        for box in self.chain:
+            box.add(Rectangle(0, 0, 0.5, 0.5, (0, 0, 0)))
 
     def update(self, delta: float):
         self.wnd.title = f"{1/delta:.2f} FPS"
@@ -60,7 +62,9 @@ class Window(BaseWindow):
 
     def on_mouse_scroll_event(self, x_offset, y_offset):
         self.outer_box.w += x_offset * 0.1
-        self.outer_box.h += y_offset * 0.1
+        self.outer_box.w = max(0.02, self.outer_box.w)
+        self.outer_box.h += y_offset * -0.1
+        self.outer_box.h = max(0.02, self.outer_box.h)
 
     def on_key_event(self, key, action, modifiers):
         if self.wnd.is_key_pressed(self.wnd.keys.SPACE):

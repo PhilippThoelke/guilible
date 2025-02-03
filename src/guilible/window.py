@@ -3,6 +3,7 @@ import weakref
 from abc import ABC, abstractmethod
 from typing import Tuple
 
+import moderngl as mgl
 import moderngl_window as mglw
 
 from guilible.ui import Rectangle
@@ -21,11 +22,14 @@ class BaseWindow(mglw.WindowConfig, ABC):
         if not hasattr(self, "ctx") and "ctx" not in kwargs:
             raise ValueError("For basic usage, run `BaseWindow.run()` instead of instantiating the class directly")
         super().__init__(*args, **kwargs)
+        self._time = None
+
+        # set up depth testing
+        self.ctx.enable(mgl.DEPTH_TEST)
+        self.ctx.depth_func = "<="
 
         # set up render component registry
         self.ctx.extra = RenderComponentRegistry()
-
-        self._time = None
 
         self.ui = Rectangle(0, 0, 1, 1, (0, 0, 0))
         self.ui.ctx = self.ctx
