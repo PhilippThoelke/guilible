@@ -24,6 +24,9 @@ class BaseWindow(mglw.WindowConfig):
         self._time = None
         self._use_guilible_components = use_guilible_components
 
+        # set up automatic garbage collection of GPU resources
+        self.ctx.gc_mode = "auto"
+
         # set up depth testing
         self.ctx.enable(mgl.DEPTH_TEST)
         self.ctx.depth_func = "<="
