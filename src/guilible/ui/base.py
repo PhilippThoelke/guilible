@@ -2,9 +2,8 @@ import weakref
 from abc import ABC, abstractmethod
 from typing import List, Optional, Tuple, Type
 
-import numpy as np
-
 import moderngl as mgl
+import numpy as np
 from moderngl import Context
 
 
