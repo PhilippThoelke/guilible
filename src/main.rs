@@ -135,15 +135,15 @@ impl<'a> RenderState<'a> {
         let mut quad_renderer =
             QuadRenderer::new(device_arc.clone(), queue_arc.clone(), config.format);
 
-        let n = 50;
+        let n = 317;
         println!("generating {} quads", n * n);
         for i in 0..n {
             for j in 0..n {
                 quad_renderer.add_quad(
                     (i as f32 / n as f32) * 2.0 - 1.0,
                     (j as f32 / n as f32) * 2.0 - 1.0,
-                    0.02,
-                    0.02,
+                    0.005,
+                    0.005,
                     utils::Color {
                         r: i as f32 / n as f32,
                         g: j as f32 / n as f32,
@@ -193,8 +193,8 @@ impl<'a> RenderState<'a> {
             let distance = (dx * dx + dy * dy).sqrt() * 0.5;
             self.quad_renderer.set_quad(
                 i,
-                (row as f32 / n as f32) * 2.0 - 1.0 + ((t + distance).sin() * 0.2),
-                (col as f32 / n as f32) * 2.0 - 1.0 + ((t + distance).cos() * 0.2),
+                (row as f32 / n as f32) * 2.0 - 1.0 + ((t + distance).sin() * 0.01),
+                (col as f32 / n as f32) * 2.0 - 1.0 + ((t + distance).cos() * 0.01),
                 w,
                 h,
                 color,
