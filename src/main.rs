@@ -1,14 +1,18 @@
+mod quad;
+mod utils;
+
 use pollster::FutureExt;
+use quad::QuadRenderer;
 use std::sync::Arc;
-use wgpu::{self, include_wgsl, BindGroupLayoutDescriptor, Color, VertexBufferLayout};
+use wgpu;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
 #[derive(Default)]
-struct AppState<'a> {
-    render_state: Option<RenderState<'a>>,
+struct AppState<'window> {
+    render_state: Option<RenderState<'window>>,
     window: Option<Arc<Window>>,
 }
 
@@ -61,15 +65,17 @@ impl<'a> ApplicationHandler for AppState<'a> {
     }
 }
 
-struct RenderState<'a> {
-    surface: wgpu::Surface<'a>,
+struct RenderState<'window> {
+    surface: wgpu::Surface<'window>,
     config: wgpu::SurfaceConfiguration,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    render_pipeline: wgpu::RenderPipeline,
-    vertex_buffer: wgpu::Buffer,
+    device_arc: Arc<wgpu::Device>,
+    queue_arc: Arc<wgpu::Queue>,
     window: Arc<Window>,
+
+    start_time: std::time::Instant,
     last_render_time: Option<std::time::Instant>,
+
+    quad_renderer: QuadRenderer,
 }
 
 impl<'a> RenderState<'a> {
@@ -93,7 +99,7 @@ impl<'a> RenderState<'a> {
             .block_on()
             .unwrap();
 
-        let (device, queue) = adapter
+        let (_device, _queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     required_features: wgpu::Features::empty(),
@@ -105,6 +111,8 @@ impl<'a> RenderState<'a> {
             )
             .block_on()
             .unwrap();
+        let device_arc = Arc::new(_device);
+        let queue_arc = Arc::new(_queue);
 
         let surface_formats = surface.get_capabilities(&adapter).formats;
         let surface_format = surface_formats
@@ -122,136 +130,102 @@ impl<'a> RenderState<'a> {
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
-        surface.configure(&device, &config);
+        surface.configure(&device_arc, &config);
 
-        let shader = device.create_shader_module(include_wgsl!("shader.wgsl"));
-        let render_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: None,
-                bind_group_layouts: &[&device.create_bind_group_layout(
-                    &BindGroupLayoutDescriptor {
-                        label: None,
-                        entries: &[wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::VERTEX,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
-                        }],
+        let mut quad_renderer =
+            QuadRenderer::new(device_arc.clone(), queue_arc.clone(), config.format);
+
+        let n = 50;
+        println!("generating {} quads", n * n);
+        for i in 0..n {
+            for j in 0..n {
+                quad_renderer.add_quad(
+                    (i as f32 / n as f32) * 2.0 - 1.0,
+                    (j as f32 / n as f32) * 2.0 - 1.0,
+                    0.02,
+                    0.02,
+                    utils::Color {
+                        r: i as f32 / n as f32,
+                        g: j as f32 / n as f32,
+                        b: ((i as f32 / n as f32) * 2.0 - 1.0)
+                            * ((j as f32 / n as f32) * 2.0 - 1.0),
+                        a: 1.0,
                     },
-                )],
-                push_constant_ranges: &[],
-            });
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("render pipeline"),
-            layout: Some(&render_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[VertexBufferLayout {
-                    array_stride: 8,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &[wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x2,
-                        offset: 0,
-                        shader_location: 0,
-                    }],
-                }],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Cw,
-                cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-            cache: None,
-        });
-
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Vertex Buffer"),
-            size: 2 * 4 * 4,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::VERTEX,
-            mapped_at_creation: false,
-        });
+                );
+            }
+        }
 
         Self {
             surface,
             config,
-            device,
-            queue,
-            render_pipeline,
-            vertex_buffer,
+            device_arc,
+            queue_arc,
             window,
+            start_time: std::time::Instant::now(),
             last_render_time: None,
+            quad_renderer,
         }
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        if let Some(last_render_time) = self.last_render_time {
-            let now = std::time::Instant::now();
-            let elapsed = now - last_render_time;
+        // calculate delta time and update window title
+        let now = std::time::Instant::now();
+        let delta_time = now
+            .duration_since(self.last_render_time.unwrap_or(now))
+            .as_secs_f64();
+        if self.last_render_time.is_some() && delta_time > 0.0 {
             self.window
-                .set_title(&format!("FPS: {:.2}", 1.0 / elapsed.as_secs_f64()));
+                .set_title(&format!("FPS: {:.2}", 1.0 / delta_time));
         }
-        self.last_render_time = Some(std::time::Instant::now());
+        self.last_render_time = Some(now);
 
+        // update quads
+        let t = self.start_time.elapsed().as_secs_f32() * 2.0;
+        let n = (self.quad_renderer.size() as f32).sqrt() as usize;
+        for i in 0..self.quad_renderer.size() {
+            let row = i / n;
+            let col = i % n;
+
+            let (_, _, w, h, color) = self.quad_renderer.get_quad(i).unwrap();
+            let center = n as f32 / 2.0;
+            let dx = row as f32 - center;
+            let dy = col as f32 - center;
+            let distance = (dx * dx + dy * dy).sqrt() * 0.5;
+            self.quad_renderer.set_quad(
+                i,
+                (row as f32 / n as f32) * 2.0 - 1.0 + ((t + distance).sin() * 0.2),
+                (col as f32 / n as f32) * 2.0 - 1.0 + ((t + distance).cos() * 0.2),
+                w,
+                h,
+                color,
+            );
+        }
+
+        // grab the current texture from the surface
         let output = self.surface.get_current_texture()?;
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        {
-            self.queue.write_buffer(
-                &self.vertex_buffer,
-                0,
-                bytemuck::cast_slice(&[-0.5f32, -0.5, -0.5, 0.5, 0.5, -0.5, 0.5, 0.5]),
-            );
-            self.queue.submit([]);
-        }
-
+        //create a render encoder
         let mut encoder = self
-            .device
+            .device_arc
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Render Encoder"),
+                label: Some("command encoder"),
             });
 
         {
+            // initialize render pass
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
+                label: Some("render pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(Color {
-                            r: 0.1,
-                            g: 0.2,
-                            b: 0.3,
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -261,43 +235,13 @@ impl<'a> RenderState<'a> {
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });
-            render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_bind_group(
-                0,
-                &self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: None,
-                    layout: &self
-                        .device
-                        .create_bind_group_layout(&BindGroupLayoutDescriptor {
-                            label: None,
-                            entries: &[wgpu::BindGroupLayoutEntry {
-                                binding: 0,
-                                visibility: wgpu::ShaderStages::VERTEX,
-                                ty: wgpu::BindingType::Buffer {
-                                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                                    has_dynamic_offset: false,
-                                    min_binding_size: None,
-                                },
-                                count: None,
-                            }],
-                        }),
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &self.vertex_buffer,
-                            offset: 0,
-                            size: None,
-                        }),
-                    }],
-                }),
-                &[],
-            );
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.draw(0..4, 0..1);
+
+            // queue rendering for all elements
+            self.quad_renderer.render(&mut render_pass);
         }
 
-        self.queue.submit(std::iter::once(encoder.finish()));
-
+        // submit the render encoder
+        self.queue_arc.submit(std::iter::once(encoder.finish()));
         output.present();
         Ok(())
     }
@@ -308,14 +252,13 @@ impl<'a> RenderState<'a> {
                 if size.width == 0 || size.height == 0 {
                     return;
                 }
-
                 self.config.width = size.width;
                 self.config.height = size.height;
-                self.surface.configure(&self.device, &self.config);
+                self.surface.configure(&self.device_arc, &self.config);
             }
             None => {
                 // Reconfigure the surface with the current size
-                self.surface.configure(&self.device, &self.config);
+                self.surface.configure(&self.device_arc, &self.config);
             }
         }
     }
