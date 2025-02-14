@@ -11,12 +11,12 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
 #[derive(Default)]
-struct AppState<'window> {
-    render_state: Option<RenderState<'window>>,
+struct AppState<'win> {
+    render_state: Option<RenderState<'win>>,
     window: Option<Arc<Window>>,
 }
 
-impl<'a> ApplicationHandler for AppState<'a> {
+impl<'win> ApplicationHandler for AppState<'win> {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         println!("application resumed");
         let win_arc = Arc::new(
@@ -65,8 +65,8 @@ impl<'a> ApplicationHandler for AppState<'a> {
     }
 }
 
-struct RenderState<'window> {
-    surface: wgpu::Surface<'window>,
+struct RenderState<'win> {
+    surface: wgpu::Surface<'win>,
     config: wgpu::SurfaceConfiguration,
     device_arc: Arc<wgpu::Device>,
     queue_arc: Arc<wgpu::Queue>,
@@ -78,7 +78,7 @@ struct RenderState<'window> {
     quad_renderer: QuadRenderer,
 }
 
-impl<'a> RenderState<'a> {
+impl<'win> RenderState<'win> {
     fn new(window: Arc<Window>) -> Self {
         println!("creating render state");
 
