@@ -26,6 +26,7 @@ pub struct QuadRenderer {
     render_pipeline: wgpu::RenderPipeline,
 
     quads: Vec<Quad>,
+    dirty: Vec<bool>,
 }
 
 impl QuadRenderer {
@@ -106,6 +107,7 @@ impl QuadRenderer {
             quad_buffer: None,
             render_pipeline,
             quads: Vec::new(),
+            dirty: Vec::new(),
         }
     }
 
@@ -117,25 +119,16 @@ impl QuadRenderer {
             h: h,
             color: color,
         });
+        self.dirty.push(true);
+
         let size = mem::size_of::<Quad>();
 
-        // create the buffer if it doesn't exist
-        if self.quad_buffer.is_none() {
-            let (buffer, bind_group) = self.create_buffer(size as u64);
-            self.quad_buffer = Some(buffer);
-            self.bind_group = Some(bind_group);
-        }
-        // grow the buffer if it's too small
-        else if self.quad_buffer.as_ref().unwrap().size() < (self.quads.len() * size) as u64 {
+        // create or grow the buffer if it's too small
+        if self.quad_buffer.is_none()
+            || self.quad_buffer.as_ref().unwrap().size() < (self.quads.len() * size) as u64
+        {
             self.grow_buffer();
         }
-
-        // write the new quad to the buffer
-        self.queue_arc.write_buffer(
-            &self.quad_buffer.as_ref().unwrap(),
-            ((self.quads.len() - 1) * size) as u64,
-            bytemuck::cast_slice(&[x, y, w, h, color.r, color.g, color.b, color.a]),
-        );
     }
 
     pub fn size(&self) -> usize {
@@ -160,20 +153,37 @@ impl QuadRenderer {
                 h: h,
                 color: color,
             };
-            let size = mem::size_of::<Quad>();
-            self.queue_arc.write_buffer(
-                &self.quad_buffer.as_ref().unwrap(),
-                (index * size) as u64,
-                bytemuck::cast_slice(&[x, y, w, h, color.r, color.g, color.b, color.a]),
-            );
+            self.dirty[index] = true;
         }
     }
 
-    pub fn render(&self, render_pass: &mut wgpu::RenderPass) {
+    pub fn render(&mut self, render_pass: &mut wgpu::RenderPass) {
         if self.quads.is_empty() {
             return;
         }
+        let size = mem::size_of::<Quad>();
+        let buffer = self.quad_buffer.as_ref().unwrap();
+        let len = self.quads.len();
+        let mut i = 0;
 
+        while i < len {
+            if self.dirty[i] {
+                let start = i;
+                // find contiguous block of dirty quads and clear flags
+                while i < len && self.dirty[i] {
+                    self.dirty[i] = false;
+                    i += 1;
+                }
+                let data = bytemuck::cast_slice(&self.quads[start..i]);
+                self.queue_arc
+                    .write_buffer(buffer, (start * size) as u64, data);
+            } else {
+                self.dirty[i] = false;
+                i += 1;
+            }
+        }
+
+        // submit the draw call
         render_pass.set_pipeline(&self.render_pipeline);
         render_pass.set_bind_group(0, &self.bind_group, &[]);
         render_pass.set_vertex_buffer(0, self.quad_buffer.as_ref().unwrap().slice(..));
@@ -184,18 +194,16 @@ impl QuadRenderer {
         let new_size = self
             .quad_buffer
             .as_ref()
-            .map_or(mem::size_of::<Quad>() as u64, |buffer| buffer.size() * 2);
+            .map_or(mem::size_of::<Quad>() as u64 * 32, |buffer| {
+                buffer.size() * 2
+            });
 
         let (new_buffer, new_bind_group) = self.create_buffer(new_size);
         self.quad_buffer = Some(new_buffer);
         self.bind_group = Some(new_bind_group);
 
-        // copy data to the new buffer
-        self.queue_arc.write_buffer(
-            self.quad_buffer.as_ref().unwrap(),
-            0,
-            bytemuck::cast_slice(&self.quads),
-        );
+        // mark all quads as dirty
+        self.dirty = vec![true; self.quads.len()];
     }
 
     fn create_buffer(&self, size: u64) -> (wgpu::Buffer, wgpu::BindGroup) {
