@@ -1,4 +1,6 @@
 mod quad;
+mod transfer;
+mod ui;
 mod utils;
 
 use pollster::FutureExt;
@@ -18,7 +20,7 @@ struct AppState<'win> {
 
 impl<'win> ApplicationHandler for AppState<'win> {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        println!("application resumed");
+        println!("application resumed, creating window");
         let win_arc = Arc::new(
             event_loop
                 .create_window(Window::default_attributes())
@@ -36,27 +38,38 @@ impl<'win> ApplicationHandler for AppState<'win> {
     ) {
         match event {
             WindowEvent::CloseRequested => {
+                println!("close requested");
+                self.render_state
+                    .take()
+                    .unwrap()
+                    .quad_renderer
+                    .stop_and_join();
                 event_loop.exit();
+                println!("shutting down");
             }
             WindowEvent::Resized(size) => {
-                self.render_state.as_mut().unwrap().resize(Some(size));
+                if let Some(render_state) = self.render_state.as_mut() {
+                    render_state.resize(Some(size));
+                }
             }
             WindowEvent::RedrawRequested => {
                 // Request next frame
                 self.window.as_ref().unwrap().request_redraw();
 
                 // Render the frame
-                match self.render_state.as_mut().unwrap().render() {
-                    Ok(_) => {}
-                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                        self.render_state.as_mut().unwrap().resize(None);
-                    }
-                    Err(wgpu::SurfaceError::OutOfMemory | wgpu::SurfaceError::Other) => {
-                        println!("Surface error, exiting");
-                        event_loop.exit();
-                    }
-                    Err(wgpu::SurfaceError::Timeout) => {
-                        println!("Surface timeout");
+                if let Some(render_state) = self.render_state.as_mut() {
+                    match render_state.render() {
+                        Ok(_) => {}
+                        Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                            render_state.resize(None);
+                        }
+                        Err(wgpu::SurfaceError::OutOfMemory | wgpu::SurfaceError::Other) => {
+                            println!("Surface error, exiting");
+                            event_loop.exit();
+                        }
+                        Err(wgpu::SurfaceError::Timeout) => {
+                            println!("Surface timeout");
+                        }
                     }
                 }
             }
@@ -72,7 +85,6 @@ struct RenderState<'win> {
     queue_arc: Arc<wgpu::Queue>,
     window: Arc<Window>,
 
-    start_time: std::time::Instant,
     last_render_time: Option<std::time::Instant>,
 
     quad_renderer: QuadRenderer,
@@ -89,7 +101,10 @@ impl<'win> RenderState<'win> {
             ..Default::default()
         });
 
-        let surface = instance.create_surface(window.clone()).unwrap();
+        let surface = instance
+            .create_surface(window.clone())
+            .expect("failed to create surface");
+
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -97,7 +112,7 @@ impl<'win> RenderState<'win> {
                 force_fallback_adapter: false,
             })
             .block_on()
-            .unwrap();
+            .expect("failed to find an adapter");
 
         let (_device, _queue) = adapter
             .request_device(
@@ -110,7 +125,8 @@ impl<'win> RenderState<'win> {
                 None,
             )
             .block_on()
-            .unwrap();
+            .expect("failed to create device");
+
         let device_arc = Arc::new(_device);
         let queue_arc = Arc::new(_queue);
 
@@ -132,28 +148,7 @@ impl<'win> RenderState<'win> {
         };
         surface.configure(&device_arc, &config);
 
-        let mut quad_renderer =
-            QuadRenderer::new(device_arc.clone(), queue_arc.clone(), config.format);
-
-        let n = 317;
-        println!("generating {} quads", n * n);
-        for i in 0..n {
-            for j in 0..n {
-                quad_renderer.add_quad(
-                    (i as f32 / n as f32) * 2.0 - 1.0,
-                    (j as f32 / n as f32) * 2.0 - 1.0,
-                    0.005,
-                    0.005,
-                    utils::Color {
-                        r: i as f32 / n as f32,
-                        g: j as f32 / n as f32,
-                        b: ((i as f32 / n as f32) * 2.0 - 1.0)
-                            * ((j as f32 / n as f32) * 2.0 - 1.0),
-                        a: 1.0,
-                    },
-                );
-            }
-        }
+        let quad_renderer = QuadRenderer::new(device_arc.clone(), queue_arc.clone(), config.format);
 
         Self {
             surface,
@@ -161,45 +156,13 @@ impl<'win> RenderState<'win> {
             device_arc,
             queue_arc,
             window,
-            start_time: std::time::Instant::now(),
             last_render_time: None,
             quad_renderer,
         }
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        // calculate delta time and update window title
-        let now = std::time::Instant::now();
-        let delta_time = now
-            .duration_since(self.last_render_time.unwrap_or(now))
-            .as_secs_f64();
-        if self.last_render_time.is_some() && delta_time > 0.0 {
-            self.window
-                .set_title(&format!("FPS: {:.2}", 1.0 / delta_time));
-        }
-        self.last_render_time = Some(now);
-
-        // update quads
-        let t = self.start_time.elapsed().as_secs_f32() * 2.0;
-        let n = (self.quad_renderer.size() as f32).sqrt() as usize;
-        for i in 0..self.quad_renderer.size() {
-            let row = i / n;
-            let col = i % n;
-
-            let (_, _, w, h, color) = self.quad_renderer.get_quad(i).unwrap();
-            let center = n as f32 / 2.0;
-            let dx = row as f32 - center;
-            let dy = col as f32 - center;
-            let distance = (dx * dx + dy * dy).sqrt() * 0.5;
-            self.quad_renderer.set_quad(
-                i,
-                (row as f32 / n as f32) * 2.0 - 1.0 + ((t + distance).sin() * 0.01),
-                (col as f32 / n as f32) * 2.0 - 1.0 + ((t + distance).cos() * 0.01),
-                w,
-                h,
-                color,
-            );
-        }
+        let _delta_time = self.timing();
 
         // grab the current texture from the surface
         let output = self.surface.get_current_texture()?;
@@ -213,6 +176,9 @@ impl<'win> RenderState<'win> {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("command encoder"),
             });
+
+        // keep track of storage buffers to be recycled after rendering
+        let mut storage_buffers = Vec::<transfer::StorageBuffer>::new();
 
         {
             // initialize render pass
@@ -237,13 +203,40 @@ impl<'win> RenderState<'win> {
             });
 
             // queue rendering for all elements
-            self.quad_renderer.render(&mut render_pass);
+            storage_buffers.extend(self.quad_renderer.render(&mut render_pass));
         }
+
+        // TODO: figure out if we need to poll the device or not
+        self.device_arc.poll(wgpu::Maintain::Wait);
 
         // submit the render encoder
         self.queue_arc.submit(std::iter::once(encoder.finish()));
+
+        // recycle storage buffers
+        self.queue_arc.on_submitted_work_done(move || {
+            for storage_buffer in storage_buffers.iter() {
+                storage_buffer
+                    .ready
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
+
         output.present();
         Ok(())
+    }
+
+    fn timing(&mut self) -> f64 {
+        // calculate delta time and update window title
+        let now = std::time::Instant::now();
+        let delta_time = now
+            .duration_since(self.last_render_time.unwrap_or(now))
+            .as_secs_f64();
+        if self.last_render_time.is_some() && delta_time > 0.0 {
+            self.window
+                .set_title(&format!("FPS: {:.2}", 1.0 / delta_time));
+        }
+        self.last_render_time = Some(now);
+        delta_time
     }
 
     fn resize(&mut self, size: Option<winit::dpi::PhysicalSize<u32>>) {

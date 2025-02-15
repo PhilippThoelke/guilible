@@ -1,32 +1,12 @@
-use std::mem;
 use std::sync::Arc;
 
-use crate::utils;
-use bytemuck::NoUninit;
+use crate::transfer;
+use crate::ui;
 use wgpu::include_wgsl;
 
-#[repr(C)]
-#[derive(Clone, Copy, NoUninit)]
-struct Quad {
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
-    color: utils::Color,
-}
-
 pub struct QuadRenderer {
-    device_arc: Arc<wgpu::Device>,
-    queue_arc: Arc<wgpu::Queue>,
-
-    bind_group_layout: wgpu::BindGroupLayout,
-    bind_group: Option<wgpu::BindGroup>,
-    quad_buffer: Option<wgpu::Buffer>,
-
     render_pipeline: wgpu::RenderPipeline,
-
-    quads: Vec<Quad>,
-    dirty: Vec<bool>,
+    transfer_worker: transfer::TransferWorker,
 }
 
 impl QuadRenderer {
@@ -64,7 +44,7 @@ impl QuadRenderer {
                 module: &shader,
                 entry_point: Some("vs_main"),
                 buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: size_of::<Quad>() as u64,
+                    array_stride: size_of::<ui::Quad>() as u64,
                     step_mode: wgpu::VertexStepMode::Instance,
                     attributes: &[wgpu::VertexAttribute {
                         format: wgpu::VertexFormat::Float32x2,
@@ -99,138 +79,33 @@ impl QuadRenderer {
             cache: None,
         });
 
+        let ui_worker = ui::create_ui_worker();
+        let transfer_worker =
+            transfer::create_transfer_worker(transfer::TransferWorkerDescriptor {
+                device_arc,
+                queue_arc,
+                bind_group_layout,
+                ui_worker,
+            });
+
         QuadRenderer {
-            device_arc,
-            queue_arc,
-            bind_group_layout,
-            bind_group: None,
-            quad_buffer: None,
             render_pipeline,
-            quads: Vec::new(),
-            dirty: Vec::new(),
+            transfer_worker,
         }
     }
 
-    pub fn add_quad(&mut self, x: f32, y: f32, w: f32, h: f32, color: utils::Color) {
-        self.quads.push(Quad {
-            x: x,
-            y: y,
-            w: w,
-            h: h,
-            color: color,
-        });
-        self.dirty.push(true);
+    pub fn render(&mut self, render_pass: &mut wgpu::RenderPass) -> Vec<transfer::StorageBuffer> {
+        let msg = self.transfer_worker.recv();
 
-        let size = mem::size_of::<Quad>();
-
-        // create or grow the buffer if it's too small
-        if self.quad_buffer.is_none()
-            || self.quad_buffer.as_ref().unwrap().size() < (self.quads.len() * size) as u64
-        {
-            self.grow_buffer();
-        }
-    }
-
-    pub fn size(&self) -> usize {
-        self.quads.len()
-    }
-
-    pub fn get_quad(&self, index: usize) -> Option<(f32, f32, f32, f32, utils::Color)> {
-        if index < self.quads.len() {
-            let quad = self.quads[index];
-            Some((quad.x, quad.y, quad.w, quad.h, quad.color))
-        } else {
-            None
-        }
-    }
-
-    pub fn set_quad(&mut self, index: usize, x: f32, y: f32, w: f32, h: f32, color: utils::Color) {
-        if index < self.quads.len() {
-            self.quads[index] = Quad {
-                x: x,
-                y: y,
-                w: w,
-                h: h,
-                color: color,
-            };
-            self.dirty[index] = true;
-        }
-    }
-
-    pub fn render(&mut self, render_pass: &mut wgpu::RenderPass) {
-        if self.quads.is_empty() {
-            return;
-        }
-        let size = mem::size_of::<Quad>();
-        let buffer = self.quad_buffer.as_ref().unwrap();
-        let len = self.quads.len();
-        let mut i = 0;
-
-        while i < len {
-            if self.dirty[i] {
-                let start = i;
-                // find contiguous block of dirty quads and clear flags
-                while i < len && self.dirty[i] {
-                    self.dirty[i] = false;
-                    i += 1;
-                }
-                let data = bytemuck::cast_slice(&self.quads[start..i]);
-                self.queue_arc
-                    .write_buffer(buffer, (start * size) as u64, data);
-            } else {
-                self.dirty[i] = false;
-                i += 1;
-            }
-        }
-
-        // submit the draw call
         render_pass.set_pipeline(&self.render_pipeline);
-        render_pass.set_bind_group(0, &self.bind_group, &[]);
-        render_pass.set_vertex_buffer(0, self.quad_buffer.as_ref().unwrap().slice(..));
-        render_pass.draw(0..4, 0..self.quads.len() as u32);
+        render_pass.set_bind_group(0, Some(&msg.storage_buffer.bind_group), &[]);
+        render_pass.set_vertex_buffer(0, msg.storage_buffer.buffer.slice(..));
+        render_pass.draw(0..4, 0..msg.num_instances);
+
+        vec![msg.storage_buffer]
     }
 
-    fn grow_buffer(&mut self) {
-        let new_size = self
-            .quad_buffer
-            .as_ref()
-            .map_or(mem::size_of::<Quad>() as u64 * 32, |buffer| {
-                buffer.size() * 2
-            });
-
-        let (new_buffer, new_bind_group) = self.create_buffer(new_size);
-        self.quad_buffer = Some(new_buffer);
-        self.bind_group = Some(new_bind_group);
-
-        // mark all quads as dirty
-        self.dirty = vec![true; self.quads.len()];
-    }
-
-    fn create_buffer(&self, size: u64) -> (wgpu::Buffer, wgpu::BindGroup) {
-        let buffer = self.device_arc.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("quad buffer"),
-            size: size,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::VERTEX,
-            mapped_at_creation: false,
-        });
-
-        let bind_group = self
-            .device_arc
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("quad bind group"),
-                layout: &self.bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffer,
-                        offset: 0,
-                        size: None,
-                    }),
-                }],
-            });
-
-        (buffer, bind_group)
+    pub fn stop_and_join(self) {
+        self.transfer_worker.stop_and_join();
     }
 }
