@@ -189,9 +189,7 @@ fn staging_to_storage(
 }
 
 pub fn create_transfer_worker(descriptor: TransferWorkerDescriptor) -> TransferWorker {
-    // TODO: check if we want a buffer size of 0 or 1 in the sync_channel
-    let (sender, receiver) = std::sync::mpsc::sync_channel(0);
-
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
     let alive = Arc::new(atomic::AtomicBool::new(true));
 
     TransferWorker {
