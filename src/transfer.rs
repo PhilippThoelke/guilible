@@ -172,6 +172,7 @@ fn staging_to_storage(
     queue_arc.submit(std::iter::once(encoder.finish()));
 
     // re-map the staging buffer after the copy is done and mark it as ready once it has been mapped
+    let device_arc = device_arc.clone();
     queue_arc.on_submitted_work_done(move || {
         staging
             .buffer
@@ -185,6 +186,8 @@ fn staging_to_storage(
                     eprintln!("failed to re-map staging buffer: {:?}", e);
                 }
             });
+        // poll the device to avoid BufferAsyncError
+        device_arc.poll(wgpu::Maintain::Poll);
     });
 }
 
