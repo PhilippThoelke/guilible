@@ -1,10 +1,12 @@
 [package]
+edition = "2021"
 name = "guilible"
 version = "0.1.0"
-edition = "2021"
 
 [dependencies]
+bytemuck = "1.7.0"
+online-statistics = "0.2.6"
+pollster = "0.4.0"
+rayon = "1.10.0"
 wgpu = "24.0.1"
 winit = "0.30.9"
-pollster = "0.4.0"
-bytemuck = "1.7.0"

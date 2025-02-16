@@ -1,9 +1,49 @@
 use crate::utils;
 use bytemuck::NoUninit;
+use rayon::prelude::*;
 use std::{
     sync::{atomic, mpsc, Arc},
     thread,
 };
+
+fn setup(quad_manager: &mut QuadManager) {
+    let n = 1000;
+    let quad_size = 0.001;
+    println!("generating {} quads", n * n);
+    for i in 0..n {
+        for j in 0..n {
+            quad_manager.add_quad(
+                (i as f32 / n as f32) - 0.5,
+                (j as f32 / n as f32) - 0.5,
+                quad_size,
+                quad_size,
+                utils::Color {
+                    r: i as f32 / n as f32,
+                    g: j as f32 / n as f32,
+                    b: ((i as f32 / n as f32) * 2.0 - 1.0) * ((j as f32 / n as f32) * 2.0 - 1.0),
+                    a: 1.0,
+                },
+            );
+        }
+    }
+}
+
+fn update(quad_manager: &mut QuadManager, start_time: std::time::Instant) {
+    let delta = start_time.elapsed().as_secs_f32();
+    let n = (quad_manager.quads.len() as f32).sqrt();
+
+    quad_manager
+        .quads
+        .par_iter_mut()
+        .enumerate()
+        .for_each(|(i, quad)| {
+            let i = i as f32;
+            let x = i % n;
+            let y = i / n;
+            quad.x = (x / n) - 0.5 + (delta * 1.0 + x / n * 6.0).sin() * 0.4;
+            quad.y = (y / n) - 0.5 + (delta * 1.0 + y / n * 6.0).cos() * 0.4;
+        });
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, NoUninit)]
@@ -55,45 +95,34 @@ pub fn create_ui_worker() -> UIWorker {
         worker_handle: thread::Builder::new()
             .name("ui worker".to_string())
             .spawn(move || {
-                let start = std::time::Instant::now();
+                let worker_start = std::time::Instant::now();
 
+                // create quad manager and setup example quads
+                // TODO: this will be outsourced once guilible becomes a library
                 let mut quad_manager = QuadManager { quads: Vec::new() };
-                let n = 100;
-                let quad_size = 0.01;
-                println!("generating {} quads", n * n);
-                for i in 0..n {
-                    for j in 0..n {
-                        quad_manager.add_quad(
-                            (i as f32 / n as f32) - 0.5,
-                            (j as f32 / n as f32) - 0.5,
-                            quad_size,
-                            quad_size,
-                            utils::Color {
-                                r: i as f32 / n as f32,
-                                g: j as f32 / n as f32,
-                                b: ((i as f32 / n as f32) * 2.0 - 1.0)
-                                    * ((j as f32 / n as f32) * 2.0 - 1.0),
-                                a: 1.0,
-                            },
-                        );
-                    }
-                }
+                setup(&mut quad_manager);
 
+                let mut stats = utils::Stats::default();
                 while alive.load(atomic::Ordering::SeqCst) {
-                    for quad in &mut quad_manager.quads {
-                        quad.x += start.elapsed().as_secs_f32().cos() * 0.001;
-                        quad.y += start.elapsed().as_secs_f32().cos() * 0.001;
-                    }
+                    let loop_start = std::time::Instant::now();
 
+                    // update quads
+                    update(&mut quad_manager, worker_start);
+
+                    // pack quad data into a flat array
+                    // TODO: this becomes quite slow for >1M quads, we might want to directly copy to a staging buffer here
+                    let data = bytemuck::cast_slice(&quad_manager.quads).to_vec();
+
+                    // construct message
                     let message = UIWorkerMessage {
-                        data: quad_manager
-                            .quads
-                            .iter()
-                            .flat_map(|quad| -> [f32; 8] { quad.into() })
-                            .collect(),
+                        data,
                         num_instances: quad_manager.quads.len() as u32,
                     };
 
+                    // update statistics (loop start to message sent)
+                    stats.update(loop_start.elapsed().as_secs_f64());
+
+                    // send message to the transfer thread (blocks until the previous message has been consumed)
                     match sender.try_send(message) {
                         Ok(_) => {}
                         Err(mpsc::TrySendError::Full(_)) => {}
@@ -102,6 +131,8 @@ pub fn create_ui_worker() -> UIWorker {
                         }
                     }
                 }
+
+                println!("├─ ui          (cpu)   : {}", stats);
             })
             .expect("failed to spawn ui worker"),
     }
@@ -121,7 +152,6 @@ impl UIWorker {
     }
 
     pub fn stop_and_join(self) {
-        println!("stopping ui worker");
         self.alive.store(false, atomic::Ordering::SeqCst);
         self.worker_handle
             .join()

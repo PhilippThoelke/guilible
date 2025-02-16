@@ -4,6 +4,7 @@ use std::{
 };
 
 use crate::ui;
+use crate::utils;
 use wgpu;
 
 #[derive(Clone)]
@@ -33,8 +34,8 @@ fn create_staging_buffer(device_arc: &Arc<wgpu::Device>, buffer_size: u64) -> St
 
 fn create_storage_buffer(
     device_arc: &Arc<wgpu::Device>,
-    buffer_size: u64,
     bind_group_layout: &wgpu::BindGroupLayout,
+    buffer_size: u64,
 ) -> StorageBuffer {
     let storage = device_arc.create_buffer(&wgpu::BufferDescriptor {
         label: Some("pool storage buffer"),
@@ -93,7 +94,6 @@ impl BufferPool {
         while self.buffer_size < min_size {
             // grow the buffer size and discard all available buffers
             self.buffer_size *= 2;
-            println!("increasing buffer size to {}", self.buffer_size);
             self.staging_buffers.clear();
             self.storage_buffers.clear();
         }
@@ -107,8 +107,10 @@ impl BufferPool {
         {
             Some(result) => result.clone(),
             None => {
-                // no buffer chains available, create a new one
-                create_staging_buffer(&self.device_arc, self.buffer_size)
+                // no mapped staging buffer available, create a new one
+                let new_buffer = create_staging_buffer(&self.device_arc, self.buffer_size);
+                self.staging_buffers.push(new_buffer.clone());
+                new_buffer
             }
         };
 
@@ -134,8 +136,15 @@ impl BufferPool {
         {
             Some(result) => result.clone(),
             None => {
-                // no buffer chains available, create a new one
-                create_storage_buffer(&self.device_arc, self.buffer_size, &self.bind_group_layout)
+                // no storage buffers available, create a new one
+                let new_buffer = create_storage_buffer(
+                    &self.device_arc,
+                    &self.bind_group_layout,
+                    self.buffer_size,
+                );
+                // TODO: investigate if it really is faster to keep a pool of storage buffers
+                // self.storage_buffers.push(new_buffer.clone());
+                new_buffer
             }
         };
 
@@ -207,12 +216,17 @@ pub fn create_transfer_worker(descriptor: TransferWorkerDescriptor) -> TransferW
                     initial_buffer_size: 1024,
                 });
 
+                let mut stats = utils::Stats::default();
                 while alive.load(atomic::Ordering::SeqCst) {
+                    // start measuring time
+                    let loop_start = std::time::Instant::now();
+
                     // receive data from the UI thread
                     let ui_data = descriptor.ui_worker.recv();
-                    let num_bytes = (ui_data.data.len() * 4) as u64;
 
-                    // request a mapped staging buffer from the pool
+                    // request a larger staging buffer if the data does not fit
+                    // TODO: maybe we want to request the staging buffer before receiving the data
+                    let num_bytes = (ui_data.data.len() * 4) as u64;
                     let staging_buffer = buffer_pool.request_staging(num_bytes);
 
                     // retrieve mapped slice from the staging buffer
@@ -239,9 +253,14 @@ pub fn create_transfer_worker(descriptor: TransferWorkerDescriptor) -> TransferW
 
                     // send the storage buffer to the render thread
                     let message = TransferWorkerMessage {
-                        storage_buffer: storage_buffer,
+                        storage_buffer,
                         num_instances: ui_data.num_instances,
                     };
+
+                    // update statistics (data receive until message sent)
+                    stats.update(loop_start.elapsed().as_secs_f64());
+
+                    // send message to the render thread (blocks until the previous message has been consumed)
                     match sender.try_send(message) {
                         Ok(_) => {}
                         Err(mpsc::TrySendError::Full(_)) => {}
@@ -251,9 +270,10 @@ pub fn create_transfer_worker(descriptor: TransferWorkerDescriptor) -> TransferW
                         }
                     }
                 }
-
-                // clean up
+                // stop the ui worker and wait for it to finish
                 descriptor.ui_worker.stop_and_join();
+
+                println!("├─ transfer  (cpu→gpu) : {}", stats);
             })
             .expect("failed to spawn transfer worker"),
     }
@@ -280,7 +300,6 @@ impl TransferWorker {
     }
 
     pub fn stop_and_join(self) {
-        println!("stopping transfer worker");
         self.alive.store(false, atomic::Ordering::SeqCst);
         self.worker_handle
             .join()

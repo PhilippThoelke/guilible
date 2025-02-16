@@ -38,14 +38,13 @@ impl<'win> ApplicationHandler for AppState<'win> {
     ) {
         match event {
             WindowEvent::CloseRequested => {
-                println!("close requested");
-                self.render_state
-                    .take()
-                    .unwrap()
-                    .quad_renderer
-                    .stop_and_join();
+                println!("\nclose requested");
+                let state = self.render_state.take().unwrap();
+
+                state.quad_renderer.stop_and_join();
+                println!("╰─ render      (gpu)   : {}", state.stats);
+
                 event_loop.exit();
-                println!("shutting down");
             }
             WindowEvent::Resized(size) => {
                 if let Some(render_state) = self.render_state.as_mut() {
@@ -86,6 +85,7 @@ struct RenderState<'win> {
     window: Arc<Window>,
 
     last_render_time: Option<std::time::Instant>,
+    stats: utils::Stats,
 
     quad_renderer: QuadRenderer,
 }
@@ -157,12 +157,14 @@ impl<'win> RenderState<'win> {
             queue_arc,
             window,
             last_render_time: None,
+            stats: utils::Stats::default(),
             quad_renderer,
         }
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         let _delta_time = self.timing();
+        let render_start_time = std::time::Instant::now();
 
         // grab the current texture from the surface
         let output = self.surface.get_current_texture()?;
@@ -206,9 +208,6 @@ impl<'win> RenderState<'win> {
             storage_buffers.extend(self.quad_renderer.render(&mut render_pass));
         }
 
-        // TODO: figure out if we need to poll the device or not
-        self.device_arc.poll(wgpu::Maintain::Wait);
-
         // submit the render encoder
         self.queue_arc.submit(std::iter::once(encoder.finish()));
 
@@ -221,7 +220,11 @@ impl<'win> RenderState<'win> {
             }
         });
 
+        // present the frame
         output.present();
+        // update stats
+        self.stats.update(render_start_time.elapsed().as_secs_f64());
+
         Ok(())
     }
 
