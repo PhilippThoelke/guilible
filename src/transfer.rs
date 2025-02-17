@@ -90,13 +90,8 @@ struct BufferPool {
 }
 
 impl BufferPool {
-    pub fn request_staging(&mut self, min_size: u64) -> StagingBuffer {
-        while self.buffer_size < min_size {
-            // grow the buffer size and discard all available buffers
-            self.buffer_size *= 2;
-            self.staging_buffers.clear();
-            self.storage_buffers.clear();
-        }
+    pub fn request_staging(&mut self, min_size: Option<u64>) -> StagingBuffer {
+        self.check_size(min_size);
 
         // check if there are any available buffers
         let result = match self
@@ -118,14 +113,8 @@ impl BufferPool {
         result
     }
 
-    pub fn request_storage(&mut self, min_size: u64) -> StorageBuffer {
-        while self.buffer_size < min_size {
-            // grow the buffer size and discard all available buffers
-            self.buffer_size *= 2;
-            println!("increasing buffer size to {}", self.buffer_size);
-            self.staging_buffers.clear();
-            self.storage_buffers.clear();
-        }
+    pub fn request_storage(&mut self, min_size: Option<u64>) -> StorageBuffer {
+        self.check_size(min_size);
 
         // check if there are any available buffers
         let result = match self
@@ -150,6 +139,18 @@ impl BufferPool {
 
         result.ready.store(false, atomic::Ordering::SeqCst);
         result
+    }
+
+    fn check_size(&mut self, min_size: Option<u64>) {
+        if let Some(min_size) = min_size {
+            while self.buffer_size < min_size {
+                // grow the buffer size and discard all available buffers
+                self.buffer_size *= 2;
+                println!("increasing buffer size to {}", self.buffer_size);
+                self.staging_buffers.clear();
+                self.storage_buffers.clear();
+            }
+        }
     }
 }
 
@@ -218,16 +219,22 @@ pub fn create_transfer_worker(descriptor: TransferWorkerDescriptor) -> TransferW
 
                 let mut stats = utils::Stats::default();
                 while alive.load(atomic::Ordering::SeqCst) {
-                    // start measuring time
-                    let loop_start = std::time::Instant::now();
+                    // request staging and storage buffers for the next iteration
+                    let mut storage_buffer = buffer_pool.request_storage(None);
+                    let mut staging_buffer = buffer_pool.request_staging(None);
 
                     // receive data from the UI thread
                     let ui_data = descriptor.ui_worker.recv();
-
-                    // request a larger staging buffer if the data does not fit
-                    // TODO: maybe we want to request the staging buffer before receiving the data
                     let num_bytes = (ui_data.data.len() * 4) as u64;
-                    let staging_buffer = buffer_pool.request_staging(num_bytes);
+
+                    // start measuring time
+                    let loop_start = std::time::Instant::now();
+
+                    // request larger buffers if the data does not fit
+                    if num_bytes > staging_buffer.buffer.size() {
+                        staging_buffer = buffer_pool.request_staging(Some(num_bytes));
+                        storage_buffer = buffer_pool.request_storage(Some(num_bytes));
+                    }
 
                     // retrieve mapped slice from the staging buffer
                     let mut view = staging_buffer
@@ -241,8 +248,6 @@ pub fn create_transfer_worker(descriptor: TransferWorkerDescriptor) -> TransferW
                     staging_buffer.buffer.unmap();
 
                     // copy staging buffer to a storage buffer
-                    // TODO: investigate if we want to request the storage buffer here or before writing to the staging buffer
-                    let storage_buffer = buffer_pool.request_storage(num_bytes);
                     staging_to_storage(
                         staging_buffer,
                         &storage_buffer,
