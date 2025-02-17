@@ -3,6 +3,7 @@ use std::{
     thread,
 };
 
+use crate::renderer;
 use crate::ui;
 use crate::utils;
 use wgpu;
@@ -151,7 +152,7 @@ impl BufferPool {
     }
 }
 
-pub struct TransferWorkerMessage {
+pub struct ConstructionWorkerMessage {
     pub storage_buffer: StorageBuffer,
     pub num_instances: u32,
 }
@@ -192,20 +193,20 @@ fn staging_to_storage(
     });
 }
 
-pub fn create_transfer_worker(descriptor: TransferWorkerDescriptor) -> TransferWorker {
+pub fn create_construction_worker(descriptor: ConstructionWorkerDescriptor) -> ConstructionWorker {
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
     let alive = Arc::new(atomic::AtomicBool::new(true));
 
-    TransferWorker {
+    ConstructionWorker {
         receiver,
         alive: alive.clone(),
         worker_handle: thread::Builder::new()
-            .name("transfer worker".to_string())
+            .name("construction worker".to_string())
             .spawn(move || {
                 // create quad manager and setup example quads
                 // Note: this will happen outside of the library
-                let mut quad_manager = ui::QuadManager { quads: Vec::new() };
-                ui::setup(&mut quad_manager);
+                let mut ui_state = ui::UIState::new();
+                ui_state.setup();
 
                 // create buffer pool
                 let mut buffer_pool = create_buffer_pool(BufferPoolDescriptor {
@@ -222,15 +223,16 @@ pub fn create_transfer_worker(descriptor: TransferWorkerDescriptor) -> TransferW
 
                     // update quads
                     // Note: this will happen outside of the library
-                    ui::update(&mut quad_manager, worker_start);
+                    ui_state.update(worker_start);
 
                     // request staging and storage buffers
-                    let num_bytes = (quad_manager.quads.len() * size_of::<ui::Quad>()) as u64;
+                    let num_bytes =
+                        ui_state.num_quads() as u64 * size_of::<renderer::Quad>() as u64;
                     let staging_buffer = buffer_pool.request_staging(num_bytes);
                     let storage_buffer = buffer_pool.request_storage(num_bytes);
 
                     // pack quad data into a flat array
-                    let data = bytemuck::cast_slice(&quad_manager.quads);
+                    let data = ui_state.quads();
 
                     // prepare staging buffer for writing
                     let mut view = staging_buffer
@@ -254,9 +256,9 @@ pub fn create_transfer_worker(descriptor: TransferWorkerDescriptor) -> TransferW
                     );
 
                     // send the storage buffer to the render thread
-                    let message = TransferWorkerMessage {
+                    let message = ConstructionWorkerMessage {
                         storage_buffer,
-                        num_instances: quad_manager.quads.len() as u32,
+                        num_instances: ui_state.num_quads(),
                     };
 
                     // update statistics (data receive until message sent)
@@ -274,35 +276,35 @@ pub fn create_transfer_worker(descriptor: TransferWorkerDescriptor) -> TransferW
                 }
 
                 // print statistics
-                println!("├─ transfer  (cpu→gpu) : {}", stats);
+                println!("├─ construct : {}", stats);
             })
-            .expect("failed to spawn transfer worker"),
+            .expect("failed to spawn construction worker"),
     }
 }
 
-pub struct TransferWorkerDescriptor {
+pub struct ConstructionWorkerDescriptor {
     pub device_arc: Arc<wgpu::Device>,
     pub queue_arc: Arc<wgpu::Queue>,
     pub bind_group_layout: wgpu::BindGroupLayout,
 }
 
-pub struct TransferWorker {
-    receiver: mpsc::Receiver<TransferWorkerMessage>,
+pub struct ConstructionWorker {
+    receiver: mpsc::Receiver<ConstructionWorkerMessage>,
     alive: Arc<atomic::AtomicBool>,
     worker_handle: std::thread::JoinHandle<()>,
 }
 
-impl TransferWorker {
-    pub fn recv(&self) -> TransferWorkerMessage {
+impl ConstructionWorker {
+    pub fn recv(&self) -> ConstructionWorkerMessage {
         self.receiver
             .recv()
-            .expect("failed to receive message from transfer worker")
+            .expect("failed to receive message from construction worker")
     }
 
     pub fn stop_and_join(self) {
         self.alive.store(false, atomic::Ordering::SeqCst);
         self.worker_handle
             .join()
-            .expect("failed to join transfer worker thread");
+            .expect("failed to join construction worker thread");
     }
 }

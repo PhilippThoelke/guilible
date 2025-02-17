@@ -1,10 +1,10 @@
-mod quad;
-mod transfer;
+mod construction;
+mod renderer;
 mod ui;
 mod utils;
 
 use pollster::FutureExt;
-use quad::QuadRenderer;
+use renderer::Renderer;
 use std::sync::Arc;
 use wgpu;
 use winit::application::ApplicationHandler;
@@ -42,7 +42,7 @@ impl<'win> ApplicationHandler for AppState<'win> {
                 let state = self.render_state.take().unwrap();
 
                 state.quad_renderer.stop_and_join();
-                println!("╰─ render      (gpu)   : {}", state.stats);
+                println!("╰─ render    : {}", state.stats);
 
                 event_loop.exit();
             }
@@ -87,7 +87,7 @@ struct RenderState<'win> {
     last_render_time: Option<std::time::Instant>,
     stats: utils::Stats,
 
-    quad_renderer: QuadRenderer,
+    quad_renderer: Renderer,
 }
 
 impl<'win> RenderState<'win> {
@@ -148,7 +148,7 @@ impl<'win> RenderState<'win> {
         };
         surface.configure(&device_arc, &config);
 
-        let quad_renderer = QuadRenderer::new(device_arc.clone(), queue_arc.clone(), config.format);
+        let quad_renderer = Renderer::new(device_arc.clone(), queue_arc.clone(), config.format);
 
         Self {
             surface,
@@ -180,7 +180,7 @@ impl<'win> RenderState<'win> {
             });
 
         // keep track of storage buffers to be recycled after rendering
-        let mut storage_buffers = Vec::<transfer::StorageBuffer>::new();
+        let mut storage_buffers = Vec::<construction::StorageBuffer>::new();
 
         {
             // initialize render pass
