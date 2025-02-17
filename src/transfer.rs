@@ -90,7 +90,7 @@ struct BufferPool {
 }
 
 impl BufferPool {
-    pub fn request_staging(&mut self, min_size: Option<u64>) -> StagingBuffer {
+    pub fn request_staging(&mut self, min_size: u64) -> StagingBuffer {
         self.check_size(min_size);
 
         // check if there are any available buffers
@@ -113,7 +113,7 @@ impl BufferPool {
         result
     }
 
-    pub fn request_storage(&mut self, min_size: Option<u64>) -> StorageBuffer {
+    pub fn request_storage(&mut self, min_size: u64) -> StorageBuffer {
         self.check_size(min_size);
 
         // check if there are any available buffers
@@ -131,8 +131,7 @@ impl BufferPool {
                     &self.bind_group_layout,
                     self.buffer_size,
                 );
-                // TODO: investigate if it really is faster to keep a pool of storage buffers
-                // self.storage_buffers.push(new_buffer.clone());
+                self.storage_buffers.push(new_buffer.clone());
                 new_buffer
             }
         };
@@ -141,15 +140,13 @@ impl BufferPool {
         result
     }
 
-    fn check_size(&mut self, min_size: Option<u64>) {
-        if let Some(min_size) = min_size {
-            while self.buffer_size < min_size {
-                // grow the buffer size and discard all available buffers
-                self.buffer_size *= 2;
-                println!("increasing buffer size to {}", self.buffer_size);
-                self.staging_buffers.clear();
-                self.storage_buffers.clear();
-            }
+    fn check_size(&mut self, min_size: u64) {
+        while self.buffer_size < min_size {
+            // grow the buffer size and discard all available buffers
+            self.buffer_size *= 2;
+            println!("increasing buffer size to {}", self.buffer_size);
+            self.staging_buffers.clear();
+            self.storage_buffers.clear();
         }
     }
 }
@@ -226,11 +223,11 @@ pub fn create_transfer_worker(descriptor: TransferWorkerDescriptor) -> TransferW
                     // update quads
                     // Note: this will happen outside of the library
                     ui::update(&mut quad_manager, worker_start);
-                    let num_bytes = (quad_manager.quads.len() * 8 * 4) as u64;
 
                     // request staging and storage buffers
-                    let staging_buffer = buffer_pool.request_staging(Some(num_bytes));
-                    let storage_buffer = buffer_pool.request_storage(Some(num_bytes));
+                    let num_bytes = (quad_manager.quads.len() * size_of::<ui::Quad>()) as u64;
+                    let staging_buffer = buffer_pool.request_staging(num_bytes);
+                    let storage_buffer = buffer_pool.request_storage(num_bytes);
 
                     // pack quad data into a flat array
                     let data = bytemuck::cast_slice(&quad_manager.quads);
