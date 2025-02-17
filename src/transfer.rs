@@ -8,10 +8,28 @@ use crate::utils;
 use wgpu;
 
 #[derive(Clone)]
+struct StagingBuffer {
+    buffer: wgpu::Buffer,
+    ready: Arc<atomic::AtomicBool>,
+}
+
+#[derive(Clone)]
 pub struct StorageBuffer {
     pub buffer: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
     pub ready: Arc<atomic::AtomicBool>,
+}
+
+fn create_staging_buffer(device_arc: &Arc<wgpu::Device>, buffer_size: u64) -> StagingBuffer {
+    StagingBuffer {
+        buffer: device_arc.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("pool staging buffer"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: true,
+        }),
+        ready: Arc::new(atomic::AtomicBool::new(true)),
+    }
 }
 
 fn create_storage_buffer(
@@ -51,6 +69,7 @@ fn create_buffer_pool(descriptor: BufferPoolDescriptor) -> BufferPool {
     BufferPool {
         device_arc: descriptor.device_arc,
         bind_group_layout: descriptor.bind_group_layout,
+        staging_buffers: Vec::new(),
         storage_buffers: Vec::new(),
         buffer_size: descriptor.initial_buffer_size,
     }
@@ -65,11 +84,35 @@ struct BufferPoolDescriptor {
 struct BufferPool {
     device_arc: Arc<wgpu::Device>,
     bind_group_layout: wgpu::BindGroupLayout,
+    staging_buffers: Vec<StagingBuffer>,
     storage_buffers: Vec<StorageBuffer>,
     buffer_size: u64,
 }
 
 impl BufferPool {
+    pub fn request_staging(&mut self, min_size: Option<u64>) -> StagingBuffer {
+        self.check_size(min_size);
+
+        // check if there are any available buffers
+        let result = match self
+            .staging_buffers
+            .iter()
+            .filter(|b| b.ready.load(atomic::Ordering::SeqCst))
+            .next()
+        {
+            Some(result) => result.clone(),
+            None => {
+                // no mapped staging buffer available, create a new one
+                let new_buffer = create_staging_buffer(&self.device_arc, self.buffer_size);
+                self.staging_buffers.push(new_buffer.clone());
+                new_buffer
+            }
+        };
+
+        result.ready.store(false, atomic::Ordering::SeqCst);
+        result
+    }
+
     pub fn request_storage(&mut self, min_size: Option<u64>) -> StorageBuffer {
         self.check_size(min_size);
 
@@ -88,7 +131,8 @@ impl BufferPool {
                     &self.bind_group_layout,
                     self.buffer_size,
                 );
-                self.storage_buffers.push(new_buffer.clone());
+                // TODO: investigate if it really is faster to keep a pool of storage buffers
+                // self.storage_buffers.push(new_buffer.clone());
                 new_buffer
             }
         };
@@ -103,6 +147,7 @@ impl BufferPool {
                 // grow the buffer size and discard all available buffers
                 self.buffer_size *= 2;
                 println!("increasing buffer size to {}", self.buffer_size);
+                self.staging_buffers.clear();
                 self.storage_buffers.clear();
             }
         }
@@ -115,7 +160,7 @@ pub struct TransferWorkerMessage {
 }
 
 fn staging_to_storage(
-    staging: ui::StagingBuffer,
+    staging: StagingBuffer,
     storage: &StorageBuffer,
     device_arc: &Arc<wgpu::Device>,
     queue_arc: &Arc<wgpu::Queue>,
@@ -160,32 +205,51 @@ pub fn create_transfer_worker(descriptor: TransferWorkerDescriptor) -> TransferW
         worker_handle: thread::Builder::new()
             .name("transfer worker".to_string())
             .spawn(move || {
+                // create quad manager and setup example quads
+                // Note: this will happen outside of the library
+                let mut quad_manager = ui::QuadManager { quads: Vec::new() };
+                ui::setup(&mut quad_manager);
+
+                // create buffer pool
                 let mut buffer_pool = create_buffer_pool(BufferPoolDescriptor {
                     device_arc: descriptor.device_arc.clone(),
                     bind_group_layout: descriptor.bind_group_layout,
                     initial_buffer_size: 1024,
                 });
 
+                let worker_start = std::time::Instant::now();
                 let mut stats = utils::Stats::default();
                 while alive.load(atomic::Ordering::SeqCst) {
-                    // request storage buffers for the next iteration
-                    let mut storage_buffer = buffer_pool.request_storage(None);
-
-                    // receive data from the UI thread
-                    let ui_data = descriptor.ui_worker.recv();
-                    let num_bytes = (ui_data.num_instances * 8 * 4) as u64;
-
                     // start measuring time
                     let loop_start = std::time::Instant::now();
 
-                    // request larger buffers if the data does not fit
-                    if num_bytes > storage_buffer.buffer.size() {
-                        storage_buffer = buffer_pool.request_storage(Some(num_bytes));
-                    }
+                    // update quads
+                    // Note: this will happen outside of the library
+                    ui::update(&mut quad_manager, worker_start);
+                    let num_bytes = (quad_manager.quads.len() * 8 * 4) as u64;
+
+                    // request staging and storage buffers
+                    let staging_buffer = buffer_pool.request_staging(Some(num_bytes));
+                    let storage_buffer = buffer_pool.request_storage(Some(num_bytes));
+
+                    // pack quad data into a flat array
+                    let data = bytemuck::cast_slice(&quad_manager.quads);
+
+                    // prepare staging buffer for writing
+                    let mut view = staging_buffer
+                        .buffer
+                        .slice(0..num_bytes)
+                        .get_mapped_range_mut();
+                    let floats: &mut [f32] = bytemuck::cast_slice_mut(&mut view);
+
+                    // copy data into staging buffer
+                    floats.copy_from_slice(&data);
+                    drop(view);
+                    staging_buffer.buffer.unmap();
 
                     // copy staging buffer to a storage buffer
                     staging_to_storage(
-                        ui_data.staging_buffer,
+                        staging_buffer,
                         &storage_buffer,
                         &descriptor.device_arc,
                         &descriptor.queue_arc,
@@ -195,7 +259,7 @@ pub fn create_transfer_worker(descriptor: TransferWorkerDescriptor) -> TransferW
                     // send the storage buffer to the render thread
                     let message = TransferWorkerMessage {
                         storage_buffer,
-                        num_instances: ui_data.num_instances,
+                        num_instances: quad_manager.quads.len() as u32,
                     };
 
                     // update statistics (data receive until message sent)
@@ -211,9 +275,8 @@ pub fn create_transfer_worker(descriptor: TransferWorkerDescriptor) -> TransferW
                         }
                     }
                 }
-                // stop the ui worker and wait for it to finish
-                descriptor.ui_worker.stop_and_join();
 
+                // print statistics
                 println!("├─ transfer  (cpu→gpu) : {}", stats);
             })
             .expect("failed to spawn transfer worker"),
@@ -224,7 +287,6 @@ pub struct TransferWorkerDescriptor {
     pub device_arc: Arc<wgpu::Device>,
     pub queue_arc: Arc<wgpu::Queue>,
     pub bind_group_layout: wgpu::BindGroupLayout,
-    pub ui_worker: ui::UIWorker,
 }
 
 pub struct TransferWorker {

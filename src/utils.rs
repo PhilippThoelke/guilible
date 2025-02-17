@@ -14,12 +14,16 @@ pub struct Color {
 pub struct Stats {
     pub mean: online_statistics::mean::Mean<f64>,
     pub variance: online_statistics::variance::Variance<f64>,
+    count: i32,
 }
 
 impl Stats {
     pub fn update(&mut self, value: f64) {
-        self.mean.update(value);
-        self.variance.update(value);
+        if self.count > 100 {
+            self.mean.update(value);
+            self.variance.update(value);
+        }
+        self.count += 1;
     }
 }
 
