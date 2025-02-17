@@ -1,10 +1,10 @@
-mod construction;
-mod renderer;
+mod construct;
+mod render;
 mod ui;
 mod utils;
 
 use pollster::FutureExt;
-use renderer::Renderer;
+use render::Renderer;
 use std::sync::Arc;
 use wgpu;
 use winit::application::ApplicationHandler;
@@ -20,7 +20,9 @@ struct AppState<'win> {
 
 impl<'win> ApplicationHandler for AppState<'win> {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        println!("application resumed, creating window");
+        println!("starting guilible");
+        println!("├─ creating window");
+
         let win_arc = Arc::new(
             event_loop
                 .create_window(Window::default_attributes())
@@ -38,10 +40,11 @@ impl<'win> ApplicationHandler for AppState<'win> {
     ) {
         match event {
             WindowEvent::CloseRequested => {
-                println!("\nclose requested");
+                println!("\nclosing guilible");
                 let state = self.render_state.take().unwrap();
 
-                state.quad_renderer.stop_and_join();
+                // stop worker threads and print statistics
+                state.renderer.stop_and_join();
                 println!("╰─ render    : {}", state.stats);
 
                 event_loop.exit();
@@ -60,14 +63,15 @@ impl<'win> ApplicationHandler for AppState<'win> {
                     match render_state.render() {
                         Ok(_) => {}
                         Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                            println!("surface lost or outdated, recomfiguring");
                             render_state.resize(None);
                         }
                         Err(wgpu::SurfaceError::OutOfMemory | wgpu::SurfaceError::Other) => {
-                            println!("Surface error, exiting");
+                            println!("surface error, exiting");
                             event_loop.exit();
                         }
                         Err(wgpu::SurfaceError::Timeout) => {
-                            println!("Surface timeout");
+                            println!("surface timeout");
                         }
                     }
                 }
@@ -87,13 +91,11 @@ struct RenderState<'win> {
     last_render_time: Option<std::time::Instant>,
     stats: utils::Stats,
 
-    quad_renderer: Renderer,
+    renderer: Renderer,
 }
 
 impl<'win> RenderState<'win> {
     fn new(window: Arc<Window>) -> Self {
-        println!("creating render state");
-
         let window_size = window.inner_size();
 
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
@@ -148,7 +150,9 @@ impl<'win> RenderState<'win> {
         };
         surface.configure(&device_arc, &config);
 
-        let quad_renderer = Renderer::new(device_arc.clone(), queue_arc.clone(), config.format);
+        let renderer = Renderer::new(device_arc.clone(), queue_arc.clone(), config.format);
+
+        println!("╰─ ready");
 
         Self {
             surface,
@@ -158,12 +162,12 @@ impl<'win> RenderState<'win> {
             window,
             last_render_time: None,
             stats: utils::Stats::default(),
-            quad_renderer,
+            renderer,
         }
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        let _delta_time = self.timing();
+        let _delta_time = self.update_timing();
         let render_start_time = std::time::Instant::now();
 
         // grab the current texture from the surface
@@ -172,15 +176,15 @@ impl<'win> RenderState<'win> {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        //create a render encoder
+        // create a render encoder
         let mut encoder = self
             .device_arc
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("command encoder"),
+                label: Some("render command encoder"),
             });
 
         // keep track of storage buffers to be recycled after rendering
-        let mut storage_buffers = Vec::<construction::StorageBuffer>::new();
+        let mut storage_buffers = Vec::<construct::StorageBuffer>::new();
 
         {
             // initialize render pass
@@ -190,12 +194,7 @@ impl<'win> RenderState<'win> {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.0,
-                            g: 0.0,
-                            b: 0.0,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -205,7 +204,7 @@ impl<'win> RenderState<'win> {
             });
 
             // queue rendering for all elements
-            storage_buffers.extend(self.quad_renderer.render(&mut render_pass));
+            storage_buffers.extend(self.renderer.render(&mut render_pass));
         }
 
         // submit the render encoder
@@ -222,13 +221,14 @@ impl<'win> RenderState<'win> {
 
         // present the frame
         output.present();
+
         // update stats
         self.stats.update(render_start_time.elapsed().as_secs_f64());
 
         Ok(())
     }
 
-    fn timing(&mut self) -> f64 {
+    fn update_timing(&mut self) -> f64 {
         // calculate delta time and update window title
         let now = std::time::Instant::now();
         let delta_time = now

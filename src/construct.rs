@@ -3,7 +3,7 @@ use std::{
     thread,
 };
 
-use crate::renderer;
+use crate::render;
 use crate::ui;
 use crate::utils;
 use wgpu;
@@ -47,7 +47,7 @@ fn create_storage_buffer(
         mapped_at_creation: false,
     });
     let bind_group = device_arc.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("quad bind group"),
+        label: Some("bind group"),
         layout: &bind_group_layout,
         entries: &[wgpu::BindGroupEntry {
             binding: 0,
@@ -145,7 +145,6 @@ impl BufferPool {
         while self.buffer_size < min_size {
             // grow the buffer size and discard all available buffers
             self.buffer_size *= 2;
-            println!("increasing buffer size to {}", self.buffer_size);
             self.staging_buffers.clear();
             self.storage_buffers.clear();
         }
@@ -194,6 +193,8 @@ fn staging_to_storage(
 }
 
 pub fn create_construction_worker(descriptor: ConstructionWorkerDescriptor) -> ConstructionWorker {
+    println!("├─ starting construction worker");
+
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
     let alive = Arc::new(atomic::AtomicBool::new(true));
 
@@ -226,8 +227,7 @@ pub fn create_construction_worker(descriptor: ConstructionWorkerDescriptor) -> C
                     ui_state.update(worker_start);
 
                     // request staging and storage buffers
-                    let num_bytes =
-                        ui_state.num_quads() as u64 * size_of::<renderer::Quad>() as u64;
+                    let num_bytes = ui_state.num_quads() as u64 * size_of::<render::Quad>() as u64;
                     let staging_buffer = buffer_pool.request_staging(num_bytes);
                     let storage_buffer = buffer_pool.request_storage(num_bytes);
 
@@ -295,10 +295,8 @@ pub struct ConstructionWorker {
 }
 
 impl ConstructionWorker {
-    pub fn recv(&self) -> ConstructionWorkerMessage {
-        self.receiver
-            .recv()
-            .expect("failed to receive message from construction worker")
+    pub fn recv(&self) -> Result<ConstructionWorkerMessage, mpsc::RecvError> {
+        self.receiver.recv()
     }
 
     pub fn stop_and_join(self) {

@@ -1,13 +1,14 @@
+use std::sync::mpsc;
 use std::sync::Arc;
 
-use crate::construction;
+use crate::construct;
 use crate::utils;
 use bytemuck::NoUninit;
 use wgpu::include_wgsl;
 
 pub struct Renderer {
     quad_pipeline: QuadPipeline,
-    construction_worker: construction::ConstructionWorker,
+    construction_worker: construct::ConstructionWorker,
 }
 
 impl Renderer {
@@ -16,10 +17,12 @@ impl Renderer {
         queue_arc: Arc<wgpu::Queue>,
         texture_out_format: wgpu::TextureFormat,
     ) -> Renderer {
+        println!("├─ initializing render pipeline");
+
         let quad_pipeline = QuadPipeline::new(device_arc.clone(), texture_out_format);
 
         let construction_worker =
-            construction::create_construction_worker(construction::ConstructionWorkerDescriptor {
+            construct::create_construction_worker(construct::ConstructionWorkerDescriptor {
                 device_arc,
                 queue_arc,
                 bind_group_layout: quad_pipeline.bind_group_layout.clone(),
@@ -34,15 +37,22 @@ impl Renderer {
     pub fn render(
         &mut self,
         render_pass: &mut wgpu::RenderPass,
-    ) -> Vec<construction::StorageBuffer> {
-        let msg = self.construction_worker.recv();
+    ) -> Vec<construct::StorageBuffer> {
+        match self.construction_worker.recv() {
+            Ok(state) => {
+                // configure the render pass with the received state
+                render_pass.set_pipeline(&self.quad_pipeline.pipeline);
+                render_pass.set_bind_group(0, &state.storage_buffer.bind_group, &[]);
+                render_pass.set_vertex_buffer(0, state.storage_buffer.buffer.slice(..));
+                render_pass.draw(0..4, 0..state.num_instances);
 
-        render_pass.set_pipeline(&self.quad_pipeline.pipeline);
-        render_pass.set_bind_group(0, &msg.storage_buffer.bind_group, &[]);
-        render_pass.set_vertex_buffer(0, msg.storage_buffer.buffer.slice(..));
-        render_pass.draw(0..4, 0..msg.num_instances);
-
-        vec![msg.storage_buffer]
+                vec![state.storage_buffer]
+            }
+            Err(mpsc::RecvError) => {
+                eprintln!("failed to receive construction state, empty frame");
+                vec![]
+            }
+        }
     }
 
     pub fn stop_and_join(self) {

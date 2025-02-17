@@ -1,14 +1,14 @@
-use crate::renderer;
+use crate::render;
 use crate::utils;
 use rayon::prelude::*;
 
 pub struct QuadManager {
-    pub quads: Vec<renderer::Quad>,
+    pub quads: Vec<render::Quad>,
 }
 
 impl QuadManager {
     pub fn add_quad(&mut self, x: f32, y: f32, w: f32, h: f32, color: utils::Color) {
-        self.quads.push(renderer::Quad { x, y, w, h, color });
+        self.quads.push(render::Quad { x, y, w, h, color });
     }
 }
 
@@ -25,7 +25,6 @@ impl UIState {
     pub fn setup(&mut self) {
         let n = 2000;
         let quad_size = 0.001;
-        println!("generating {} quads", n * n);
         for i in 0..n {
             for j in 0..n {
                 self.quad_manager.add_quad(
