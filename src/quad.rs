@@ -79,7 +79,7 @@ impl QuadRenderer {
             cache: None,
         });
 
-        let ui_worker = ui::create_ui_worker();
+        let ui_worker = ui::create_ui_worker(device_arc.clone());
         let transfer_worker =
             transfer::create_transfer_worker(transfer::TransferWorkerDescriptor {
                 device_arc,
