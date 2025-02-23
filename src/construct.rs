@@ -289,16 +289,12 @@ pub struct ConstructionWorkerDescriptor {
 }
 
 pub struct ConstructionWorker {
-    receiver: mpsc::Receiver<ConstructionWorkerMessage>,
+    pub receiver: mpsc::Receiver<ConstructionWorkerMessage>,
     alive: Arc<atomic::AtomicBool>,
     worker_handle: std::thread::JoinHandle<()>,
 }
 
 impl ConstructionWorker {
-    pub fn recv(&self) -> Result<ConstructionWorkerMessage, mpsc::RecvError> {
-        self.receiver.recv()
-    }
-
     pub fn stop_and_join(self) {
         self.alive.store(false, atomic::Ordering::SeqCst);
         self.worker_handle

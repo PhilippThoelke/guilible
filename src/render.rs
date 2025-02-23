@@ -38,7 +38,7 @@ impl Renderer {
         &mut self,
         render_pass: &mut wgpu::RenderPass,
     ) -> Vec<construct::StorageBuffer> {
-        match self.construction_worker.recv() {
+        match self.construction_worker.receiver.recv() {
             Ok(state) => {
                 // configure the render pass with the received state
                 render_pass.set_pipeline(&self.quad_pipeline.pipeline);

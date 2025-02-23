@@ -7,4 +7,16 @@
 > #### This library is not yet ready for use. It lacks most features, is not stable and more of a testing ground at this point.
 
 ## Usage
-Assuming you have a rust installation, simply clone the repo and execute `cargo run`.
+For now the Python API is very simple and just creates a window with a hardcoded stress test.
+
+```python
+import guilible as gl
+
+win = gl.Window()
+win.start()
+```
+
+## Building wheels
+Eventually we will build the Rust code in CI and publish Python wheels, for this the maturin-generated CI script will be a good starting point: `maturin generate-ci github`
+
+For now we can locally build the wheel simply by running `pip install -e .` in the repository root.

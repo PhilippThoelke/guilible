@@ -1,24 +1,20 @@
-mod construct;
-mod render;
-mod ui;
-mod utils;
-
+use crate::construct;
+use crate::render::Renderer;
+use crate::utils;
 use pollster::FutureExt;
-use render::Renderer;
 use std::sync::Arc;
 use wgpu;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
-use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
 #[derive(Default)]
-struct AppState<'win> {
-    render_state: Option<RenderState<'win>>,
+pub struct Application<'win> {
+    state: Option<State<'win>>,
     window: Option<Arc<Window>>,
 }
 
-impl<'win> ApplicationHandler for AppState<'win> {
+impl<'win> ApplicationHandler for Application<'win> {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         println!("starting guilible");
         println!("├─ creating window");
@@ -29,7 +25,7 @@ impl<'win> ApplicationHandler for AppState<'win> {
                 .unwrap(),
         );
         self.window = Some(win_arc.clone());
-        self.render_state = Some(RenderState::new(win_arc.clone()));
+        self.state = Some(State::new(win_arc.clone()));
     }
 
     fn window_event(
@@ -41,25 +37,30 @@ impl<'win> ApplicationHandler for AppState<'win> {
         match event {
             WindowEvent::CloseRequested => {
                 println!("\nclosing guilible");
-                let state = self.render_state.take().unwrap();
 
-                // stop worker threads and print statistics
-                state.renderer.stop_and_join();
-                println!("╰─ render    : {}", state.stats);
+                // stop the renderer and drop the state
+                if let Some(state) = self.state.take() {
+                    state.renderer.stop_and_join();
+                    println!("╰─ render    : {}", state.stats);
+                }
 
+                // drop the window and exit the event loop
+                self.window.take();
                 event_loop.exit();
             }
+
             WindowEvent::Resized(size) => {
-                if let Some(render_state) = self.render_state.as_mut() {
+                if let Some(render_state) = self.state.as_mut() {
                     render_state.resize(Some(size));
                 }
             }
+
             WindowEvent::RedrawRequested => {
                 // Request next frame
                 self.window.as_ref().unwrap().request_redraw();
 
                 // Render the frame
-                if let Some(render_state) = self.render_state.as_mut() {
+                if let Some(render_state) = self.state.as_mut() {
                     match render_state.render() {
                         Ok(_) => {}
                         Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
@@ -81,7 +82,7 @@ impl<'win> ApplicationHandler for AppState<'win> {
     }
 }
 
-struct RenderState<'win> {
+struct State<'win> {
     surface: wgpu::Surface<'win>,
     config: wgpu::SurfaceConfiguration,
     device_arc: Arc<wgpu::Device>,
@@ -94,7 +95,7 @@ struct RenderState<'win> {
     renderer: Renderer,
 }
 
-impl<'win> RenderState<'win> {
+impl<'win> State<'win> {
     fn new(window: Arc<Window>) -> Self {
         let window_size = window.inner_size();
 
@@ -258,13 +259,4 @@ impl<'win> RenderState<'win> {
             }
         }
     }
-}
-
-fn main() {
-    let event_loop = EventLoop::new().unwrap();
-    // TODO: we might need ControlFlow::Poll to handle updating the UI based on incoming data?
-    event_loop.set_control_flow(ControlFlow::Wait);
-
-    let mut app = AppState::default();
-    let _ = event_loop.run_app(&mut app);
 }
