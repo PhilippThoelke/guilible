@@ -12,13 +12,17 @@ mod guilible {
     use super::*;
 
     #[pyclass]
-    struct Window {}
+    struct Window {
+        pub base: ui::UIElement,
+    }
 
     #[pymethods]
     impl Window {
         #[new]
         fn new() -> Self {
-            Window {}
+            Window {
+                base: ui::UIElement::base(),
+            }
         }
 
         fn start(&mut self) {

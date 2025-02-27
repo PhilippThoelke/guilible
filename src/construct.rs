@@ -3,9 +3,9 @@ use std::{
     thread,
 };
 
-use crate::render;
 use crate::ui;
 use crate::utils;
+use rayon::vec;
 use wgpu;
 
 #[derive(Clone)]
@@ -204,11 +204,6 @@ pub fn create_construction_worker(descriptor: ConstructionWorkerDescriptor) -> C
         worker_handle: thread::Builder::new()
             .name("construction worker".to_string())
             .spawn(move || {
-                // create quad manager and setup example quads
-                // Note: this will happen outside of the library
-                let mut ui_state = ui::UIState::new();
-                ui_state.setup();
-
                 // create buffer pool
                 let mut buffer_pool = create_buffer_pool(BufferPoolDescriptor {
                     device_arc: descriptor.device_arc.clone(),
@@ -216,23 +211,20 @@ pub fn create_construction_worker(descriptor: ConstructionWorkerDescriptor) -> C
                     initial_buffer_size: 1024,
                 });
 
-                let worker_start = std::time::Instant::now();
                 let mut stats = utils::Stats::default();
                 while alive.load(atomic::Ordering::SeqCst) {
                     // start measuring time
                     let loop_start = std::time::Instant::now();
 
-                    // update quads
-                    // Note: this will happen outside of the library
-                    ui_state.update(worker_start);
-
                     // request staging and storage buffers
-                    let num_bytes = ui_state.num_quads() as u64 * size_of::<render::Quad>() as u64;
+                    // TODO: replace temporary hardcoded buffer size
+                    let num_bytes = 128;
                     let staging_buffer = buffer_pool.request_staging(num_bytes);
                     let storage_buffer = buffer_pool.request_storage(num_bytes);
 
                     // pack quad data into a flat array
-                    let data = ui_state.quads();
+                    // TODO: replace temprary hardcoded empty data
+                    let data = vec![0.0; num_bytes as usize];
 
                     // prepare staging buffer for writing
                     let mut view = staging_buffer
@@ -258,7 +250,7 @@ pub fn create_construction_worker(descriptor: ConstructionWorkerDescriptor) -> C
                     // send the storage buffer to the render thread
                     let message = ConstructionWorkerMessage {
                         storage_buffer,
-                        num_instances: ui_state.num_quads(),
+                        num_instances: 0, // TODO: replace temporary hardcoded number of instances
                     };
 
                     // update statistics (data receive until message sent)

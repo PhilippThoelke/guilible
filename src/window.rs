@@ -1,6 +1,4 @@
-use crate::construct;
-use crate::render::Renderer;
-use crate::utils;
+use crate::{construct, render, utils};
 use pollster::FutureExt;
 use std::sync::Arc;
 use wgpu;
@@ -92,7 +90,7 @@ struct State<'win> {
     last_render_time: Option<std::time::Instant>,
     stats: utils::Stats,
 
-    renderer: Renderer,
+    renderer: render::Renderer,
 }
 
 impl<'win> State<'win> {
@@ -151,7 +149,7 @@ impl<'win> State<'win> {
         };
         surface.configure(&device_arc, &config);
 
-        let renderer = Renderer::new(device_arc.clone(), queue_arc.clone(), config.format);
+        let renderer = render::Renderer::new(device_arc.clone(), queue_arc.clone(), config.format);
 
         println!("╰─ ready");
 
