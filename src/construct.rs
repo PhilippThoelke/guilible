@@ -222,7 +222,7 @@ pub fn create_construction_worker(descriptor: ConstructionWorkerDescriptor) -> C
 
                     // pack quad data into a flat array
                     // TODO: replace temprary hardcoded empty data
-                    let data = vec![0.0; num_bytes as usize];
+                    let data = vec![0.0; (num_bytes / 4) as usize];
 
                     // prepare staging buffer for writing
                     let mut view = staging_buffer
