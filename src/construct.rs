@@ -3,9 +3,7 @@ use std::{
     thread,
 };
 
-use crate::ui;
 use crate::utils;
-use rayon::vec;
 use wgpu;
 
 #[derive(Clone)]

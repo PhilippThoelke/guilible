@@ -20,3 +20,11 @@ win.start()
 Eventually we will build the Rust code in CI and publish Python wheels, for this the maturin-generated CI script will be a good starting point: `maturin generate-ci github`
 
 For now we can locally build the wheel simply by running `pip install -e .` in the repository root.
+
+## Development setup
+We can use the [`maturin_import_hook`](https://www.maturin.rs/import_hook) package to automatically build the Rust code when there are changes. Run this once per virutal environment:
+```bash
+pip install maturin_import_hook
+python -m maturin_import_hook site install
+```
+Importing the package will now automatically build the Rust code.
