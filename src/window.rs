@@ -1,15 +1,31 @@
-use crate::{construct, render, utils};
 use pollster::FutureExt;
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use wgpu;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::window::Window;
 
-#[derive(Default)]
+use crate::{construct, render, ui, utils};
+
 pub struct Application<'win> {
     state: Option<State<'win>>,
     window: Option<Arc<Window>>,
+    ui_receiver: mpsc::Receiver<ui::UIState>,
+    event_sender: mpsc::Sender<WindowEvent>,
+}
+
+impl Application<'_> {
+    pub fn new(
+        ui_receiver: mpsc::Receiver<ui::UIState>,
+        event_sender: mpsc::Sender<WindowEvent>,
+    ) -> Self {
+        Self {
+            state: None,
+            window: None,
+            ui_receiver,
+            event_sender,
+        }
+    }
 }
 
 impl<'win> ApplicationHandler for Application<'win> {
@@ -30,7 +46,7 @@ impl<'win> ApplicationHandler for Application<'win> {
         &mut self,
         event_loop: &winit::event_loop::ActiveEventLoop,
         _window_id: winit::window::WindowId,
-        event: winit::event::WindowEvent,
+        event: WindowEvent,
     ) {
         match event {
             WindowEvent::CloseRequested => {
@@ -45,12 +61,6 @@ impl<'win> ApplicationHandler for Application<'win> {
                 // drop the window and exit the event loop
                 self.window.take();
                 event_loop.exit();
-            }
-
-            WindowEvent::Resized(size) => {
-                if let Some(render_state) = self.state.as_mut() {
-                    render_state.resize(Some(size));
-                }
             }
 
             WindowEvent::RedrawRequested => {
@@ -75,8 +85,18 @@ impl<'win> ApplicationHandler for Application<'win> {
                     }
                 }
             }
+
+            WindowEvent::Resized(size) => {
+                if let Some(render_state) = self.state.as_mut() {
+                    render_state.resize(Some(size));
+                }
+            }
+
             _ => {}
         }
+
+        // send the event to the UI thread
+        self.event_sender.send(event).unwrap();
     }
 }
 
