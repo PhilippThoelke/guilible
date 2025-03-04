@@ -171,7 +171,7 @@ impl<'win> State<'win> {
 
         let renderer = render::Renderer::new(device_arc.clone(), queue_arc.clone(), config.format);
 
-        println!("╰─ ready");
+        println!("╰─ ready\n");
 
         Self {
             surface,
