@@ -92,7 +92,7 @@ struct QuadPipeline {
 
 impl QuadPipeline {
     fn new(device_arc: Arc<wgpu::Device>, texture_out_format: wgpu::TextureFormat) -> QuadPipeline {
-        let shader = device_arc.create_shader_module(include_wgsl!("quad_shader.wgsl"));
+        let shader = device_arc.create_shader_module(include_wgsl!("shaders/quad_shader.wgsl"));
         let bind_group_layout =
             device_arc.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("quad bind group layout"),
