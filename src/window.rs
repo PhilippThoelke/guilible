@@ -5,24 +5,19 @@ use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::window::Window;
 
-use crate::{construct, render, ui, utils};
+use crate::{construct, render, utils};
 
 pub struct Application<'win> {
     state: Option<State<'win>>,
     window: Option<Arc<Window>>,
-    ui_receiver: mpsc::Receiver<ui::UIState>,
     event_sender: mpsc::Sender<WindowEvent>,
 }
 
 impl Application<'_> {
-    pub fn new(
-        ui_receiver: mpsc::Receiver<ui::UIState>,
-        event_sender: mpsc::Sender<WindowEvent>,
-    ) -> Self {
+    pub fn new(event_sender: mpsc::Sender<WindowEvent>) -> Self {
         Self {
             state: None,
             window: None,
-            ui_receiver,
             event_sender,
         }
     }

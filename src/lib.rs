@@ -4,19 +4,19 @@ use std::{sync::Mutex, thread};
 use winit::event_loop::{ControlFlow, EventLoop};
 
 mod construct;
+mod event;
 mod render;
 mod ui;
 mod utils;
 mod window;
 
 #[pymodule]
-pub mod guilible {
+mod guilible {
     use super::*;
 
     #[pyclass]
     pub struct Window {
         base: Arc<Mutex<ui::UIElement>>,
-        ui_sender: Option<mpsc::SyncSender<ui::UIState>>,
     }
 
     #[pymethods]
@@ -25,7 +25,6 @@ pub mod guilible {
         pub fn new() -> Self {
             Window {
                 base: Arc::new(Mutex::new(ui::UIElement::base())),
-                ui_sender: None,
             }
         }
 
@@ -34,10 +33,7 @@ pub mod guilible {
         }
 
         pub fn start(&mut self, py: Python) {
-            let (ui_sender, ui_receiver) = mpsc::sync_channel(1);
             let (event_sender, event_receiver) = mpsc::channel();
-
-            self.ui_sender = Some(ui_sender);
 
             let base_clone = self.base.clone();
             thread::Builder::new()
@@ -55,9 +51,20 @@ pub mod guilible {
             py.allow_threads(move || {
                 let event_loop = EventLoop::new().unwrap();
                 event_loop.set_control_flow(ControlFlow::Wait);
-                let _ =
-                    event_loop.run_app(&mut window::Application::new(ui_receiver, event_sender));
+                let _ = event_loop.run_app(&mut window::Application::new(event_sender));
             });
         }
     }
+
+    #[pymodule_init]
+    fn init_mod(m: &Bound<'_, PyModule>) -> PyResult<()> {
+        // add Keys class
+        m.add_class::<Keys>()
+    }
+
+    // codegen for pyclass enum Keys
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/codegen/keycode.rs"
+    ));
 }

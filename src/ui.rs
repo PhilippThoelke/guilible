@@ -1,20 +1,22 @@
 use std::sync::Arc;
 use std::vec;
 
-use pyo3::{pyclass, Py, PyAny, Python};
+use pyo3::prelude::*;
 use winit::event;
+
+use crate::event::KeyboardEvent;
 
 #[derive(Clone)]
 #[pyclass]
 pub struct UIElement {
-    children: Vec<Arc<UIElement>>,
+    _children: Vec<Arc<UIElement>>,
     event_callback: Option<Arc<Py<PyAny>>>,
 }
 
 impl UIElement {
     pub fn base() -> Self {
         UIElement {
-            children: vec![],
+            _children: vec![],
             event_callback: None,
         }
     }
@@ -27,18 +29,32 @@ impl UIElement {
 
         match event {
             event::WindowEvent::KeyboardInput {
-                device_id,
+                device_id: _,
                 event,
-                is_synthetic,
-            } => {
-                return Python::with_gil(|py| match callback_arc.call1(py, (KeyboardEvent {},)) {
-                    Ok(val) => return val.is_truthy(py).unwrap(),
-                    Err(e) => {
-                        e.print_and_set_sys_last_vars(py);
-                        false
-                    }
-                });
-            }
+                is_synthetic: _,
+            } => match event.physical_key {
+                winit::keyboard::PhysicalKey::Code(code) => {
+                    return Python::with_gil(|py| {
+                        match callback_arc.call1(
+                            py,
+                            (KeyboardEvent {
+                                key: code.into(),
+                                state: event.state.into(),
+                            },),
+                        ) {
+                            Ok(val) => return val.is_truthy(py).unwrap(),
+                            Err(e) => {
+                                e.print_and_set_sys_last_vars(py);
+                                false
+                            }
+                        }
+                    });
+                }
+                _ => {
+                    println!("Unrecognized key: {:?}", event.physical_key);
+                    return false;
+                }
+            },
             _ => return false,
         }
     }
@@ -47,9 +63,3 @@ impl UIElement {
         self.event_callback = Some(Arc::new(callback));
     }
 }
-
-#[pyclass]
-struct KeyboardEvent {}
-
-// Dummy struct to avoid unused warnings.
-pub struct UIState {}

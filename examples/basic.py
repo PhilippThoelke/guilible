@@ -2,7 +2,7 @@ import guilible as gl
 
 
 def event_callback(event):
-    print(event)
+    print(event.key, event.state)
 
 
 if __name__ == "__main__":

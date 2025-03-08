@@ -1,16 +1,23 @@
 [package]
+build = "build.rs"
 edition = "2021"
 name = "guilible"
 version = "0.1.0"
 
 [lib]
+name = "guilible"
 crate-type = ["cdylib"]
 
 [dependencies]
-bytemuck = "1.7.0"
+bytemuck = "1.22.0"
 once_cell = "1.20.3"
 online-statistics = "0.2.6"
 pollster = "0.4.0"
-pyo3 = "0.23.5"
+pyo3 = {version = "0.23.5", features = ["extension-module"]}
 wgpu = "24.0.1"
 winit = "0.30.9"
+
+[build-dependencies]
+serde = "1.0.218"
+serde-reflection = "0.5.0"
+winit = {version = "0.30.9", features = ["serde"]}
